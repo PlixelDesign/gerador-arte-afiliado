@@ -1,0 +1,165 @@
+{
+  "T1": {
+    "format": "feed",
+    "file": "templates/T1.png",
+    "dimensions": { "w": 1080, "h": 1350 },
+
+    "product_zone": {
+      "x": 400,
+      "y": 435,
+      "w": 643,
+      "h": 687
+    },
+
+    "fields": {
+      "product_name": {
+        "x": 374,
+        "y": 760,
+        "font": "bold 52px Impact",
+        "color": "#FFFFFF",
+        "align": "left",
+        "max_width": 500,
+        "wrap": true,
+        "line_height": 65,
+        "transform": "uppercase"
+      },
+      "product_subtitle": {
+        "x": 374,
+        "y": 870,
+        "font": "28px Impact",
+        "color": "#FFC107",
+        "align": "left",
+        "max_width": 620,
+        "transform": "uppercase"
+      },
+      "installments": {
+        "x": 374,
+        "y": 960,
+        "font": "bold 30px Impact",
+        "color": "#FFFFFF",
+        "align": "left",
+        "max_width": 620,
+        "transform": "uppercase"
+      },
+      "price": {
+        "x": 374,
+        "y": 1055,
+        "font": "bold 72px Impact",
+        "color": "#FFD700",
+        "align": "left",
+        "max_width": 620
+      },
+      "badge": {
+        "cx": 858,
+        "cy": 465,
+        "font": "bold 44px Impact",
+        "color": "#8B0000",
+        "align": "center",
+        "optional": true,
+        "transform": "uppercase"
+      }
+    }
+  },
+
+  "T2": {
+    "format": "story",
+    "file": "templates/T2.png",
+    "dimensions": { "w": 1080, "h": 1920 },
+
+    "product_zone": {
+      "x": 30,
+      "y": 700,
+      "w": 730,
+      "h": 530
+    },
+
+    "fields": {
+      "product_name": {
+        "x": 45,
+        "y": 470,
+        "font": "bold 80px Impact",
+        "color": "#FFFFFF",
+        "align": "left",
+        "max_width": 780,
+        "wrap": true,
+        "line_height": 98,
+        "transform": "uppercase"
+      },
+      "product_subtitle": {
+        "x": 45,
+        "y": 695,
+        "font": "bold 30px Impact",
+        "color": "#FFC107",
+        "align": "left",
+        "max_width": 790,
+        "transform": "uppercase"
+      },
+      "installments": {
+        "x": 45,
+        "y": 1305,
+        "font": "bold 36px Impact",
+        "color": "#FFFFFF",
+        "align": "left",
+        "max_width": 610,
+        "transform": "uppercase"
+      },
+      "price": {
+        "x": 45,
+        "y": 1435,
+        "font": "bold 84px Impact",
+        "color": "#FFD700",
+        "align": "left",
+        "max_width": 610
+      },
+      "badge": {
+        "cx": 875,
+        "cy": 655,
+        "font": "bold 52px Impact",
+        "color": "#8B0000",
+        "align": "center",
+        "optional": true,
+        "transform": "uppercase"
+      }
+    }
+  },
+
+  "T3": {
+    "format": "feed",
+    "file": "templates/T3.png",
+    "dimensions": { "w": 1080, "h": 1350 },
+    "placeholder": true,
+    "note": "Enviar T3.png (com e sem produto) para calibrar coordenadas"
+  },
+
+  "T4": {
+    "format": "feed",
+    "file": "templates/T4.png",
+    "dimensions": { "w": 1080, "h": 1350 },
+    "placeholder": true,
+    "note": "Enviar T4.png (com e sem produto) para calibrar coordenadas"
+  },
+
+  "T5": {
+    "format": "story",
+    "file": "templates/T5.png",
+    "dimensions": { "w": 1080, "h": 1920 },
+    "placeholder": true,
+    "note": "Enviar T5.png (com e sem produto) para calibrar coordenadas"
+  },
+
+  "T6": {
+    "format": "story",
+    "file": "templates/T6.png",
+    "dimensions": { "w": 1080, "h": 1920 },
+    "placeholder": true,
+    "note": "Enviar T6.png (com e sem produto) para calibrar coordenadas"
+  },
+
+  "T7": {
+    "format": "story",
+    "file": "templates/T7.png",
+    "dimensions": { "w": 1080, "h": 1920 },
+    "placeholder": true,
+    "note": "Enviar T7.png (com e sem produto) para calibrar coordenadas"
+  }
+}
