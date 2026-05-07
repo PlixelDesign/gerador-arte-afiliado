@@ -165,12 +165,9 @@ function loadImage(src) {
 // ── ML API ───────────────────────────────────────────────────────────────────
 
 async function fetchProduct(itemId) {
-  // Try direct; fall back to proxy if ML blocks the origin (PolicyAgent)
-  let res = await fetch(`${ML_API}${itemId}`).catch(() => null)
-  if (!res || !res.ok) {
-    res = await fetch(proxify(`${ML_API}${itemId}`)).catch(() => null)
-  }
-  if (!res || !res.ok) throw new Error('not_found')
+  // ML blocks direct browser requests via PolicyAgent — always go through proxy
+  const res = await fetch(proxify(`${ML_API}${itemId}`))
+  if (!res.ok) throw new Error(`not_found:${res.status}`)
   return res.json()
 }
 
@@ -432,10 +429,10 @@ async function handleFetch() {
   let product
   try {
     product = await fetchProduct(itemId)
-  } catch {
+  } catch (err) {
     hide(elLoadingProduct)
     elBtnFetch.disabled = false
-    elErrorMsg.textContent = 'Produto não encontrado. Verifique o link.'
+    elErrorMsg.textContent = `Produto não encontrado (${itemId} — ${err.message}). Verifique o link.`
     show(elErrorMsg)
     return
   }
