@@ -56,16 +56,25 @@ function proxify(url) {
 }
 
 function extractItemId(text) {
-  // Query params are the most reliable: item_id and wid hold the specific listing ID.
-  // Path-based /p/MLB... is the catalog product ID (different API, not usable for /items/).
+  // Query params and hash fragment hold the specific listing ID.
+  // Path-based /p/MLB... is the catalog product ID — not usable with /items/ API.
   try {
     const url = new URL(text)
+
+    // 1. wid in the hash fragment (ML affiliate links put it after #)
+    const hashParams = new URLSearchParams(url.hash.slice(1))
+    const widHash = hashParams.get('wid')
+    const mwh = widHash?.match(/MLB[\-]?(\d+)/i)
+    if (mwh) return `MLB${mwh[1]}`
+
+    // 2. item_id or wid in the query string
     for (const key of ['item_id', 'wid']) {
       const val = url.searchParams.get(key)
       const m = val?.match(/MLB[\-]?(\d+)/i)
       if (m) return `MLB${m[1]}`
     }
-    // pdp_filters encodes item_id:MLBXXXXXXX
+
+    // 3. pdp_filters encodes item_id:MLBXXXXXXX in the query string
     const filters = url.searchParams.get('pdp_filters') || ''
     const fm = filters.match(/item_id[:\s]+(MLB[\-]?\d+)/i)
     if (fm) {
@@ -73,7 +82,8 @@ function extractItemId(text) {
       if (m2) return `MLB${m2[1]}`
     }
   } catch {}
-  // Fallback: scan the raw text (handles /MLB-XXXXXXX- in path)
+
+  // Fallback: scan raw text (handles /MLB-XXXXXXX- in path)
   const m = text.match(/MLB[\-]?(\d+)/i)
   return m ? `MLB${m[1]}` : null
 }
