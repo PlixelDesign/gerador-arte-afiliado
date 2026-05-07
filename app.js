@@ -123,6 +123,7 @@ async function resolveItemId(inputUrl) {
 }
 
 function splitTitle(title) {
+  if (!title) return ['', '']
   const words = title.toUpperCase().split(/\s+/)
   let split = -1
   for (let i = 2; i < words.length; i++) {
@@ -196,10 +197,11 @@ async function fetchProduct(itemId, catalogId) {
   if (catalogId) {
     const cat = await tryFetch(`${ML_PRODUCTS}${catalogId}`)
     if (cat) {
+      console.log('[catalog response]', JSON.stringify(cat).slice(0, 500))
       const winner = cat.buy_box_winner || {}
       return {
         id:           winner.item_id || cat.id,
-        title:        cat.name,
+        title:        cat.name || cat.title || cat.catalog_product_name || cat.short_description?.content || cat.id,
         price:        winner.price  ?? cat.price,
         installments: winner.installments,
         pictures:     cat.pictures  || cat.main_pictures || [],
