@@ -4,8 +4,8 @@ import { removeBackground } from
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const CORS_PROXY    = 'https://corsproxy.io/?'
-const ALLORIGINS    = 'https://api.allorigins.win/raw?url='
 const ML_API        = 'https://api.mercadolibre.com/items/'
+const ML_PRODUCTS   = 'https://api.mercadolibre.com/products/'
 const IMGLY_PATH    = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/'
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -165,22 +165,49 @@ function loadImage(src) {
 
 // ── ML API ───────────────────────────────────────────────────────────────────
 
-async function fetchProduct(itemId) {
-  const url = `${ML_API}${itemId}`
+// Extracts /p/MLBXXXXXX catalog product ID from a URL path
+function extractCatalogId(text) {
+  const m = text.match(/\/p\/(MLB\d+)/i)
+  return m ? m[1] : null
+}
 
-  // 1. Direct — works on GitHub Pages for public items without CORS restriction
-  let res = await fetch(url).catch(() => null)
-  if (res?.ok) return res.json()
+// Tries an API URL through multiple proxies; returns the parsed JSON or null
+async function tryFetch(apiUrl) {
+  const attempts = [
+    apiUrl,                                                                        // direct
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(apiUrl)}`,      // codetabs
+    proxify(apiUrl),                                                               // corsproxy
+  ]
+  for (const url of attempts) {
+    try {
+      const res = await fetch(url)
+      if (res.ok) return res.json()
+    } catch {}
+  }
+  return null
+}
 
-  // 2. allorigins.win — clean server-side request, different IP pool from corsproxy
-  res = await fetch(`${ALLORIGINS}${encodeURIComponent(url)}`).catch(() => null)
-  if (res?.ok) return res.json()
+async function fetchProduct(itemId, catalogId) {
+  // Try standard items endpoint
+  const item = await tryFetch(`${ML_API}${itemId}`)
+  if (item) return item
 
-  // 3. corsproxy.io — last resort
-  res = await fetch(proxify(url)).catch(() => null)
-  if (res?.ok) return res.json()
+  // Catalog items require a different endpoint (ML restricts /items/ for /p/ listings)
+  if (catalogId) {
+    const cat = await tryFetch(`${ML_PRODUCTS}${catalogId}`)
+    if (cat) {
+      const winner = cat.buy_box_winner || {}
+      return {
+        id:           winner.item_id || cat.id,
+        title:        cat.name,
+        price:        winner.price  ?? cat.price,
+        installments: winner.installments,
+        pictures:     cat.pictures  || cat.main_pictures || [],
+      }
+    }
+  }
 
-  throw new Error(`not_found:${res?.status ?? 'network'}`)
+  throw new Error('not_found:403')
 }
 
 // ── Background removal ───────────────────────────────────────────────────────
@@ -438,9 +465,11 @@ async function handleFetch() {
     return
   }
 
+  const catalogId = extractCatalogId(url)
+
   let product
   try {
-    product = await fetchProduct(itemId)
+    product = await fetchProduct(itemId, catalogId)
   } catch (err) {
     hide(elLoadingProduct)
     elBtnFetch.disabled = false
