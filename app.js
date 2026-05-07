@@ -166,7 +166,16 @@ function loadImage(src) {
 // ── ML API (via Cloudflare Worker — page scraping) ────────────────────────────
 
 async function fetchProduct(mlUrl) {
-  const res = await fetch(`${WORKER_URL}?url=${encodeURIComponent(mlUrl)}`)
+  // Strip tracking/affiliate params — ML blocks server-side fetches with them
+  let cleanUrl = mlUrl
+  try {
+    const u = new URL(mlUrl)
+    u.search = ''
+    u.hash = ''
+    cleanUrl = u.href
+  } catch {}
+
+  const res = await fetch(`${WORKER_URL}?url=${encodeURIComponent(cleanUrl)}`)
   if (!res.ok) throw new Error(`worker:${res.status}`)
   const data = await res.json()
   if (data.error) throw new Error(data.error)
