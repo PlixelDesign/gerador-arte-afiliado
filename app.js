@@ -165,17 +165,8 @@ function loadImage(src) {
 
 // ── ML API (via Cloudflare Worker — page scraping) ────────────────────────────
 
-async function fetchProduct(mlUrl) {
-  // Strip tracking/affiliate params — ML blocks server-side fetches with them
-  let cleanUrl = mlUrl
-  try {
-    const u = new URL(mlUrl)
-    u.search = ''
-    u.hash = ''
-    cleanUrl = u.href
-  } catch {}
-
-  const res = await fetch(`${WORKER_URL}?url=${encodeURIComponent(cleanUrl)}`)
+async function fetchProduct(itemId) {
+  const res = await fetch(`${WORKER_URL}/${itemId}`)
   if (!res.ok) throw new Error(`worker:${res.status}`)
   const data = await res.json()
   if (data.error) throw new Error(data.error)
@@ -433,10 +424,17 @@ async function handleFetch() {
     show(elErrorMsg); return
   }
 
-  // — Step 2: fetch product data via Worker (page scraping — bypasses ML API restrictions)
+  // — Step 2: extract item ID then fetch via Worker
+  const itemId = extractItemId(rawUrl) || extractItemId(mlUrl)
+  if (!itemId) {
+    hide(elLoadingProduct); elBtnFetch.disabled = false
+    elErrorMsg.textContent = 'Não foi possível identificar o produto. Cole o link direto do produto no Mercado Livre.'
+    show(elErrorMsg); return
+  }
+
   let product
   try {
-    product = await fetchProduct(mlUrl)
+    product = await fetchProduct(itemId)
   } catch (err) {
     hide(elLoadingProduct); elBtnFetch.disabled = false
     elErrorMsg.textContent = `Produto não encontrado (${err.message}). Verifique o link.`
