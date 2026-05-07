@@ -56,6 +56,24 @@ function proxify(url) {
 }
 
 function extractItemId(text) {
+  // Query params are the most reliable: item_id and wid hold the specific listing ID.
+  // Path-based /p/MLB... is the catalog product ID (different API, not usable for /items/).
+  try {
+    const url = new URL(text)
+    for (const key of ['item_id', 'wid']) {
+      const val = url.searchParams.get(key)
+      const m = val?.match(/MLB[\-]?(\d+)/i)
+      if (m) return `MLB${m[1]}`
+    }
+    // pdp_filters encodes item_id:MLBXXXXXXX
+    const filters = url.searchParams.get('pdp_filters') || ''
+    const fm = filters.match(/item_id[:\s]+(MLB[\-]?\d+)/i)
+    if (fm) {
+      const m2 = fm[1].match(/MLB[\-]?(\d+)/i)
+      if (m2) return `MLB${m2[1]}`
+    }
+  } catch {}
+  // Fallback: scan the raw text (handles /MLB-XXXXXXX- in path)
   const m = text.match(/MLB[\-]?(\d+)/i)
   return m ? `MLB${m[1]}` : null
 }
@@ -137,8 +155,12 @@ function loadImage(src) {
 // ── ML API ───────────────────────────────────────────────────────────────────
 
 async function fetchProduct(itemId) {
-  const res = await fetch(`${ML_API}${itemId}`)
-  if (!res.ok) throw new Error('not_found')
+  // Try direct; fall back to proxy if ML blocks the origin (PolicyAgent)
+  let res = await fetch(`${ML_API}${itemId}`).catch(() => null)
+  if (!res || !res.ok) {
+    res = await fetch(proxify(`${ML_API}${itemId}`)).catch(() => null)
+  }
+  if (!res || !res.ok) throw new Error('not_found')
   return res.json()
 }
 
