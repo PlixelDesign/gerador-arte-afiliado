@@ -4,7 +4,7 @@ import { removeBackground } from
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const CORS_PROXY    = 'https://corsproxy.io/?'
-const ML_API        = 'https://api.mercadolibre.com/items/'
+const ML_API        = 'https://spring-night-4416.danielspsg.workers.dev/'
 const ML_PRODUCTS   = 'https://api.mercadolibre.com/products/'
 const IMGLY_PATH    = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/'
 
