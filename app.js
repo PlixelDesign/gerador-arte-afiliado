@@ -4,6 +4,7 @@ import { removeBackground } from
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const CORS_PROXY    = 'https://corsproxy.io/?'
+const ALLORIGINS    = 'https://api.allorigins.win/raw?url='
 const ML_API        = 'https://api.mercadolibre.com/items/'
 const IMGLY_PATH    = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/'
 
@@ -165,10 +166,21 @@ function loadImage(src) {
 // ── ML API ───────────────────────────────────────────────────────────────────
 
 async function fetchProduct(itemId) {
-  // ML blocks direct browser requests via PolicyAgent — always go through proxy
-  const res = await fetch(proxify(`${ML_API}${itemId}`))
-  if (!res.ok) throw new Error(`not_found:${res.status}`)
-  return res.json()
+  const url = `${ML_API}${itemId}`
+
+  // 1. Direct — works on GitHub Pages for public items without CORS restriction
+  let res = await fetch(url).catch(() => null)
+  if (res?.ok) return res.json()
+
+  // 2. allorigins.win — clean server-side request, different IP pool from corsproxy
+  res = await fetch(`${ALLORIGINS}${encodeURIComponent(url)}`).catch(() => null)
+  if (res?.ok) return res.json()
+
+  // 3. corsproxy.io — last resort
+  res = await fetch(proxify(url)).catch(() => null)
+  if (res?.ok) return res.json()
+
+  throw new Error(`not_found:${res?.status ?? 'network'}`)
 }
 
 // ── Background removal ───────────────────────────────────────────────────────
