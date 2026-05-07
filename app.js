@@ -4,8 +4,7 @@ import { removeBackground } from
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const CORS_PROXY    = 'https://corsproxy.io/?'
-const ML_API        = 'https://spring-night-4416.danielspsg.workers.dev/'
-const ML_PRODUCTS   = 'https://api.mercadolibre.com/products/'
+const WORKER_URL    = 'https://spring-night-4416.danielspsg.workers.dev'
 const IMGLY_PATH    = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/'
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -164,52 +163,14 @@ function loadImage(src) {
   })
 }
 
-// ── ML API ───────────────────────────────────────────────────────────────────
+// ── ML API (via Cloudflare Worker — page scraping) ────────────────────────────
 
-// Extracts /p/MLBXXXXXX catalog product ID from a URL path
-function extractCatalogId(text) {
-  const m = text.match(/\/p\/(MLB\d+)/i)
-  return m ? m[1] : null
-}
-
-// Tries an API URL through multiple proxies; returns the parsed JSON or null
-async function tryFetch(apiUrl) {
-  const attempts = [
-    apiUrl,                                                                        // direct
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(apiUrl)}`,      // codetabs
-    proxify(apiUrl),                                                               // corsproxy
-  ]
-  for (const url of attempts) {
-    try {
-      const res = await fetch(url)
-      if (res.ok) return res.json()
-    } catch {}
-  }
-  return null
-}
-
-async function fetchProduct(itemId, catalogId) {
-  // Try standard items endpoint
-  const item = await tryFetch(`${ML_API}${itemId}`)
-  if (item) return item
-
-  // Catalog items require a different endpoint (ML restricts /items/ for /p/ listings)
-  if (catalogId) {
-    const cat = await tryFetch(`${ML_PRODUCTS}${catalogId}`)
-    if (cat) {
-      console.log('[catalog response]', JSON.stringify(cat).slice(0, 500))
-      const winner = cat.buy_box_winner || {}
-      return {
-        id:           winner.item_id || cat.id,
-        title:        cat.name || cat.title || cat.catalog_product_name || cat.short_description?.content || cat.id,
-        price:        winner.price  ?? cat.price,
-        installments: winner.installments,
-        pictures:     cat.pictures  || cat.main_pictures || [],
-      }
-    }
-  }
-
-  throw new Error('not_found:403')
+async function fetchProduct(mlUrl) {
+  const res = await fetch(`${WORKER_URL}?url=${encodeURIComponent(mlUrl)}`)
+  if (!res.ok) throw new Error(`worker:${res.status}`)
+  const data = await res.json()
+  if (data.error) throw new Error(data.error)
+  return data
 }
 
 // ── Background removal ───────────────────────────────────────────────────────
@@ -436,48 +397,41 @@ async function handleFetch() {
   state.ready = false
   state.productImgEl = null
 
-  const url = elUrl.value.trim()
-
-  // — Step 1: resolve item ID (handles meli.la and other short links)
+  const rawUrl = elUrl.value.trim()
   show(elLoadingProduct)
   elBtnFetch.disabled = true
 
-  let itemId
-  try {
-    itemId = await resolveItemId(url)
-  } catch (err) {
-    hide(elLoadingProduct)
-    elBtnFetch.disabled = false
-    if (err.code === 'profile_link') {
-      elErrorMsg.innerHTML =
-        'Este link vai para uma página de loja, não um produto específico.<br>' +
-        'Abra o link, clique em <strong>"Ir para produto"</strong> no produto desejado e cole o novo link aqui.'
-    } else {
-      elErrorMsg.textContent = 'Link inválido. Use um link do Mercado Livre ou meli.la.'
-    }
-    show(elErrorMsg)
-    return
+  // — Step 1: resolve canonical ML URL (handles meli.la short links)
+  let mlUrl = rawUrl
+  if (!/mercadolivre\.com/i.test(rawUrl)) {
+    try {
+      const res = await fetch(proxify(rawUrl))
+      const finalUrl = res.headers.get('x-final-url') || ''
+      if (/mercadolivre\.com\.br\/social\//i.test(finalUrl)) {
+        hide(elLoadingProduct); elBtnFetch.disabled = false
+        elErrorMsg.innerHTML =
+          'Este link vai para uma página de loja, não um produto específico.<br>' +
+          'Abra o link, clique em <strong>"Ir para produto"</strong> no produto desejado e cole o novo link aqui.'
+        show(elErrorMsg); return
+      }
+      if (/mercadolivre\.com/i.test(finalUrl)) mlUrl = finalUrl
+    } catch {}
   }
 
-  if (!itemId) {
-    hide(elLoadingProduct)
-    elBtnFetch.disabled = false
-    elErrorMsg.textContent = 'Não foi possível identificar o produto. Cole o link direto do produto no Mercado Livre.'
-    show(elErrorMsg)
-    return
+  if (!/mercadolivre\.com/i.test(mlUrl)) {
+    hide(elLoadingProduct); elBtnFetch.disabled = false
+    elErrorMsg.textContent = 'Link inválido. Use um link do Mercado Livre ou meli.la.'
+    show(elErrorMsg); return
   }
 
-  const catalogId = extractCatalogId(url)
-
+  // — Step 2: fetch product data via Worker (page scraping — bypasses ML API restrictions)
   let product
   try {
-    product = await fetchProduct(itemId, catalogId)
+    product = await fetchProduct(mlUrl)
   } catch (err) {
-    hide(elLoadingProduct)
-    elBtnFetch.disabled = false
-    elErrorMsg.textContent = `Produto não encontrado (${itemId} — ${err.message}). Verifique o link.`
-    show(elErrorMsg)
-    return
+    hide(elLoadingProduct); elBtnFetch.disabled = false
+    elErrorMsg.textContent = `Produto não encontrado (${err.message}). Verifique o link.`
+    show(elErrorMsg); return
   }
 
   hide(elLoadingProduct)
