@@ -289,17 +289,21 @@ async function renderCanvas() {
 
   const f = tpl.fields
 
-  // 2–5. Named text fields (rendered under product image)
-  const textFields = [
-    ['product_name',     fields.name.value],
-    ['product_subtitle', fields.subtitle.value],
-    ['installments',     fields.installments.value],
-    ['price',            fields.price.value],
-  ]
+  // 2. Produto (por baixo do texto — texto fica por cima sempre)
+  if (state.productImgEl) {
+    const z     = tpl.product_zone
+    const img   = state.productImgEl
+    const scale = Math.min(z.w / img.width, z.h / img.height)
+    const pw    = img.width  * scale
+    const ph    = img.height * scale
+    const px    = z.x + (z.w - pw) / 2
+    const py    = z.y + (z.h - ph) / 2
+    ctx.drawImage(img, px, py, pw, ph)
+  }
 
-  for (const [key, raw] of textFields) {
-    const cfg = f[key]
-    if (!cfg || !raw) continue
+  // 3–6. Campos de texto (sempre por cima do produto)
+  function drawTextField(cfg, raw) {
+    if (!cfg || !raw) return
     const text = cfg.transform === 'uppercase' ? raw.toUpperCase() : raw
     ctx.save()
     ctx.font         = cfg.font
@@ -308,33 +312,31 @@ async function renderCanvas() {
     ctx.textBaseline = 'alphabetic'
 
     if (cfg.wrap) {
-      // Word-wrap: breaks text into lines at max_width boundary
       const fontSize   = parseFloat(cfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16')
       const lineHeight = cfg.line_height || Math.round(fontSize * 1.25)
       const maxW       = cfg.max_width || 9999
       const words      = text.split(' ')
-      let line = ''
-      let y    = cfg.y
-
+      let line = '', y = cfg.y
       for (const word of words) {
         const test = line ? `${line} ${word}` : word
         if (ctx.measureText(test).width > maxW && line) {
           ctx.fillText(line, cfg.x, y)
-          line = word
-          y   += lineHeight
-        } else {
-          line = test
-        }
+          line = word; y += lineHeight
+        } else { line = test }
       }
       if (line) ctx.fillText(line, cfg.x, y)
     } else {
       ctx.fillText(text, cfg.x, cfg.y, cfg.max_width)
     }
-
     ctx.restore()
   }
 
-  // 6. Badge (centered in circular element already on template)
+  drawTextField(f.product_name,     fields.name.value)
+  drawTextField(f.product_subtitle, fields.subtitle.value)
+  drawTextField(f.installments,     fields.installments.value)
+  drawTextField(f.price,            fields.price.value)
+
+  // Badge (centralizado no elemento circular do template)
   const badgeCfg = f.badge
   const badgeVal = fields.badge.value.trim()
   if (badgeCfg && badgeVal) {
@@ -346,18 +348,6 @@ async function renderCanvas() {
     ctx.textBaseline = 'middle'
     ctx.fillText(text, badgeCfg.cx, badgeCfg.cy, badgeCfg.max_width)
     ctx.restore()
-  }
-
-  // 7. Product image on top (object-fit: contain inside zone)
-  if (state.productImgEl) {
-    const z    = tpl.product_zone
-    const img  = state.productImgEl
-    const scale = Math.min(z.w / img.width, z.h / img.height)
-    const pw   = img.width  * scale
-    const ph   = img.height * scale
-    const px   = z.x + (z.w - pw) / 2
-    const py   = z.y + (z.h - ph) / 2
-    ctx.drawImage(img, px, py, pw, ph)
   }
 }
 

@@ -5,53 +5,53 @@
     "dimensions": { "w": 1080, "h": 1350 },
 
     "product_zone": {
-      "x": 400,
-      "y": 435,
-      "w": 643,
-      "h": 687
+      "x": 360,
+      "y": 250,
+      "w": 700,
+      "h": 1000
     },
 
     "fields": {
       "product_name": {
-        "x": 374,
-        "y": 760,
+        "x": 38,
+        "y": 500,
         "font": "bold 52px Impact",
         "color": "#FFFFFF",
         "align": "left",
-        "max_width": 500,
+        "max_width": 480,
         "wrap": true,
         "line_height": 65,
         "transform": "uppercase"
       },
       "product_subtitle": {
-        "x": 374,
-        "y": 870,
+        "x": 38,
+        "y": 660,
         "font": "28px Impact",
         "color": "#FFC107",
         "align": "left",
-        "max_width": 620,
+        "max_width": 480,
         "transform": "uppercase"
       },
       "installments": {
-        "x": 374,
-        "y": 960,
+        "x": 38,
+        "y": 775,
         "font": "bold 30px Impact",
         "color": "#FFFFFF",
         "align": "left",
-        "max_width": 620,
+        "max_width": 480,
         "transform": "uppercase"
       },
       "price": {
-        "x": 374,
-        "y": 1055,
+        "x": 38,
+        "y": 890,
         "font": "bold 72px Impact",
         "color": "#FFD700",
         "align": "left",
-        "max_width": 620
+        "max_width": 480
       },
       "badge": {
         "cx": 858,
-        "cy": 465,
+        "cy": 315,
         "font": "bold 44px Impact",
         "color": "#8B0000",
         "align": "center",
@@ -67,16 +67,16 @@
     "dimensions": { "w": 1080, "h": 1920 },
 
     "product_zone": {
-      "x": 30,
-      "y": 700,
-      "w": 730,
-      "h": 530
+      "x": 0,
+      "y": 780,
+      "w": 820,
+      "h": 920
     },
 
     "fields": {
       "product_name": {
         "x": 45,
-        "y": 470,
+        "y": 462,
         "font": "bold 80px Impact",
         "color": "#FFFFFF",
         "align": "left",
@@ -87,7 +87,7 @@
       },
       "product_subtitle": {
         "x": 45,
-        "y": 695,
+        "y": 675,
         "font": "bold 30px Impact",
         "color": "#FFC107",
         "align": "left",
@@ -96,7 +96,7 @@
       },
       "installments": {
         "x": 45,
-        "y": 1305,
+        "y": 1290,
         "font": "bold 36px Impact",
         "color": "#FFFFFF",
         "align": "left",
@@ -105,15 +105,15 @@
       },
       "price": {
         "x": 45,
-        "y": 1435,
+        "y": 1425,
         "font": "bold 84px Impact",
         "color": "#FFD700",
         "align": "left",
         "max_width": 610
       },
       "badge": {
-        "cx": 875,
-        "cy": 655,
+        "cx": 870,
+        "cy": 695,
         "font": "bold 52px Impact",
         "color": "#8B0000",
         "align": "center",
