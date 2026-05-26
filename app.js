@@ -163,11 +163,19 @@ function loadImage(src) {
   })
 }
 
-// ── ML API (via Cloudflare Worker — page scraping) ────────────────────────────
+// ── ML API ────────────────────────────────────────────────────────────────────
+// O Worker guarda e renova o token OAuth. O browser chama a ML API diretamente
+// com esse token — IP residencial do usuário não é bloqueado pelo PolicyAgent.
 
 async function fetchProduct(itemId) {
-  const res = await fetch(`${WORKER_URL}/${itemId}`)
-  if (!res.ok) throw new Error(`worker:${res.status}`)
+  // 1. Pega token válido do Worker (renova automaticamente se expirado)
+  const tokenRes = await fetch(`${WORKER_URL}/token`)
+  if (!tokenRes.ok) throw new Error(`token:${tokenRes.status}`)
+  const { access_token } = await tokenRes.json()
+
+  // 2. Chama a ML API diretamente do browser
+  const res = await fetch(`https://api.mercadolibre.com/items/${itemId}?access_token=${access_token}`)
+  if (!res.ok) throw new Error(`ml:${res.status}`)
   const data = await res.json()
   if (data.error) throw new Error(data.error)
   return data
