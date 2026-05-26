@@ -231,6 +231,58 @@ async function fetchProduct(itemId, originalUrl) {
 
 // ── Background removal ───────────────────────────────────────────────────────
 
+// Fallback: remove fundo branco/claro por flood-fill das bordas (canvas puro)
+async function removeWhiteBackground(blob) {
+  const tmpUrl = URL.createObjectURL(blob)
+  const img = await new Promise((res, rej) => {
+    const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = tmpUrl
+  })
+  URL.revokeObjectURL(tmpUrl)
+
+  const w = img.naturalWidth, h = img.naturalHeight
+  const canvas = document.createElement('canvas')
+  canvas.width = w; canvas.height = h
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(img, 0, 0)
+
+  const imageData = ctx.getImageData(0, 0, w, h)
+  const data = imageData.data
+  const threshold = 230
+
+  // Considera pixel "claro" (fundo): já transparente ou RGB todos acima do threshold
+  const isLight = idx => {
+    const base = idx * 4
+    return data[base + 3] < 20 ||
+      (data[base] >= threshold && data[base + 1] >= threshold && data[base + 2] >= threshold)
+  }
+
+  const visited = new Uint8Array(w * h)
+  const q = []
+
+  const enqueue = (x, y) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return
+    const idx = y * w + x
+    if (visited[idx] || !isLight(idx)) return
+    visited[idx] = 1
+    q.push(idx)
+  }
+
+  // Semeia a fila a partir de todos os pixels de borda
+  for (let x = 0; x < w; x++) { enqueue(x, 0); enqueue(x, h - 1) }
+  for (let y = 1; y < h - 1; y++) { enqueue(0, y); enqueue(w - 1, y) }
+
+  // BFS: zera o canal alpha de todos os pixels conectados ao fundo
+  while (q.length) {
+    const idx = q.pop()
+    data[idx * 4 + 3] = 0
+    const x = idx % w, y = (idx / w) | 0
+    enqueue(x + 1, y); enqueue(x - 1, y); enqueue(x, y + 1); enqueue(x, y - 1)
+  }
+
+  ctx.putImageData(imageData, 0, 0)
+  return new Promise(res => canvas.toBlob(res, 'image/png'))
+}
+
 async function removeProductBackground(originalUrl) {
   // Fetch image as blob via proxy to sidestep CORS on canvas + the WASM fetcher
   let blob
@@ -244,17 +296,23 @@ async function removeProductBackground(originalUrl) {
     blob = await res.blob()
   }
 
-  const result = await removeBackground(blob, {
-    publicPath: IMGLY_PATH,
-    progress: (_key, current, total) => {
-      if (total <= 0) return
-      const pct = Math.round((current / total) * 100)
-      elProgressBar.style.width = `${pct}%`
-      elProgressLabel.textContent = `Processando imagem… ${pct}%`
-    },
-  })
-
-  return URL.createObjectURL(result)
+  try {
+    const result = await removeBackground(blob, {
+      publicPath: IMGLY_PATH,
+      progress: (_key, current, total) => {
+        if (total <= 0) return
+        const pct = Math.round((current / total) * 100)
+        elProgressBar.style.width = `${pct}%`
+        elProgressLabel.textContent = `Processando imagem… ${pct}%`
+      },
+    })
+    return URL.createObjectURL(result)
+  } catch {
+    // @imgly falhou → tenta remoção local por flood-fill
+    elProgressLabel.textContent = 'Removendo fundo… (modo local)'
+    const result = await removeWhiteBackground(blob)
+    return URL.createObjectURL(result)
+  }
 }
 
 // ── Canvas rendering ──────────────────────────────────────────────────────────
@@ -642,8 +700,15 @@ async function init() {
           })
           finalUrl = URL.createObjectURL(result)
         } catch {
-          finalUrl = URL.createObjectURL(srcBlob)
-          show(elWarningBg)
+          // @imgly falhou → tenta remoção local por flood-fill de fundo branco
+          try {
+            elProgressLabel.textContent = 'Removendo fundo… (modo local)'
+            const result = await removeWhiteBackground(srcBlob)
+            finalUrl = URL.createObjectURL(result)
+          } catch {
+            finalUrl = URL.createObjectURL(srcBlob)
+            show(elWarningBg)
+          }
         }
       } else {
         finalUrl = proxify(pImg)
