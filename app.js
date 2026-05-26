@@ -609,28 +609,68 @@ async function init() {
     show(elSectionFields, elSectionTemplates)
 
     if (pImg) {
-      // ML serve imagens como .webp — converte para .jpg para compatibilidade
-      const imgUrl = pImg.replace(/\.webp(\?.*)?$/i, '.jpg$1')
-
       elProgressBar.style.width   = '0%'
       elProgressLabel.textContent = 'Processando imagem… 0%'
       show(elLoadingBg)
 
-      let processedUrl
-      try {
-        processedUrl = await removeProductBackground(imgUrl)
-      } catch {
-        // Remoção de fundo falhou — usa imagem original via proxy
-        processedUrl = proxify(imgUrl)
+      // 1. Busca imagem via proxy → blob local (resolve CORS e qualquer formato)
+      let srcBlob = null
+      for (const proxyFn of PROXY_LIST) {
+        try {
+          const r = await fetch(proxyFn(pImg))
+          if (r.ok) { srcBlob = await r.blob(); break }
+        } catch {}
+      }
+
+      // 2. Se webp, converte para PNG via canvas offscreen (compatibilidade com bg-removal)
+      if (srcBlob?.type?.includes('webp') || pImg.endsWith('.webp')) {
+        try {
+          const tmpUrl = URL.createObjectURL(srcBlob)
+          const tmpImg = await new Promise((res, rej) => {
+            const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = tmpUrl
+          })
+          URL.revokeObjectURL(tmpUrl)
+          const tc = document.createElement('canvas')
+          tc.width = tmpImg.naturalWidth; tc.height = tmpImg.naturalHeight
+          tc.getContext('2d').drawImage(tmpImg, 0, 0)
+          srcBlob = await new Promise(res => tc.toBlob(res, 'image/png'))
+        } catch {}
+      }
+
+      // 3. Tenta remover fundo
+      let finalUrl
+      if (srcBlob) {
+        try {
+          const result = await removeBackground(srcBlob, {
+            publicPath: IMGLY_PATH,
+            progress: (_k, cur, tot) => {
+              if (tot <= 0) return
+              const pct = Math.round((cur / tot) * 100)
+              elProgressBar.style.width = `${pct}%`
+              elProgressLabel.textContent = `Processando imagem… ${pct}%`
+            }
+          })
+          finalUrl = URL.createObjectURL(result)
+        } catch {
+          finalUrl = URL.createObjectURL(srcBlob)
+          show(elWarningBg)
+        }
+      } else {
+        finalUrl = proxify(pImg)
         show(elWarningBg)
       }
 
       hide(elLoadingBg)
 
-      // Tenta carregar a imagem processada; fallback para proxy direto
-      for (const candidate of [processedUrl, proxify(imgUrl), proxify(pImg)]) {
-        try { state.productImgEl = await loadImage(candidate); break } catch {}
-      }
+      // 4. Carrega imagem — blob URLs são same-origin, não poluem o canvas
+      try {
+        state.productImgEl = await new Promise((res, rej) => {
+          const img = new Image()
+          img.onload = () => res(img)
+          img.onerror = rej
+          img.src = finalUrl
+        })
+      } catch { state.productImgEl = null }
     }
 
     state.ready = true
