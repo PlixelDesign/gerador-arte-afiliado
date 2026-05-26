@@ -164,21 +164,54 @@ function loadImage(src) {
 }
 
 // ── ML API ────────────────────────────────────────────────────────────────────
-// O Worker guarda e renova o token OAuth. O browser chama a ML API diretamente
-// com esse token — IP residencial do usuário não é bloqueado pelo PolicyAgent.
+// ML bloqueia /items/{id} de terceiros mesmo com OAuth.
+// Estratégia: raspar o HTML da página do produto via corsproxy e extrair
+// os dados estruturados (JSON-LD / Open Graph / meta tags).
 
-async function fetchProduct(itemId) {
-  // 1. Pega token válido do Worker (renova automaticamente se expirado)
-  const tokenRes = await fetch(`${WORKER_URL}/token`)
-  if (!tokenRes.ok) throw new Error(`token:${tokenRes.status}`)
-  const { access_token } = await tokenRes.json()
+async function fetchProduct(itemId, originalUrl) {
+  // Monta URL canônica se não temos a original
+  const productUrl = originalUrl || `https://www.mercadolivre.com.br/p/${itemId}`
 
-  // 2. Chama a ML API diretamente do browser
-  const res = await fetch(`https://api.mercadolibre.com/items/${itemId}?access_token=${access_token}`)
-  if (!res.ok) throw new Error(`ml:${res.status}`)
-  const data = await res.json()
-  if (data.error) throw new Error(data.error)
-  return data
+  const res = await fetch(proxify(productUrl))
+  if (!res.ok) throw new Error(`page:${res.status}`)
+  const html = await res.text()
+
+  if (html.includes('suspicious-traffic-frontend'))
+    throw new Error('bot_detection')
+
+  // ── Tenta JSON-LD ──────────────────────────────────────────────────────────
+  const ldMatches = [...html.matchAll(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi)]
+  for (const m of ldMatches) {
+    try {
+      const ld = JSON.parse(m[1])
+      const prod = Array.isArray(ld) ? ld.find(x => x['@type'] === 'Product') : (ld['@type'] === 'Product' ? ld : null)
+      if (!prod) continue
+      const price = parseFloat(prod.offers?.price ?? prod.offers?.lowPrice ?? 0)
+      const imgUrl = Array.isArray(prod.image) ? prod.image[0] : prod.image
+      return {
+        title: prod.name || '',
+        price,
+        pictures: imgUrl ? [{ url: imgUrl }] : [],
+        installments: null,
+      }
+    } catch {}
+  }
+
+  // ── Tenta Open Graph / meta tags ───────────────────────────────────────────
+  const ogTitle = html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i)?.[1]
+  const ogImage = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i)?.[1]
+  const priceTag = html.match(/<meta[^>]+itemprop="price"[^>]+content="([^"]+)"/i)?.[1]
+
+  if (ogTitle && priceTag) {
+    return {
+      title: ogTitle,
+      price: parseFloat(priceTag),
+      pictures: ogImage ? [{ url: ogImage }] : [],
+      installments: null,
+    }
+  }
+
+  throw new Error('parse_failed')
 }
 
 // ── Background removal ───────────────────────────────────────────────────────
@@ -442,7 +475,7 @@ async function handleFetch() {
 
   let product
   try {
-    product = await fetchProduct(itemId)
+    product = await fetchProduct(itemId, mlUrl)
   } catch (err) {
     hide(elLoadingProduct); elBtnFetch.disabled = false
     elErrorMsg.textContent = `Produto não encontrado (${err.message}). Verifique o link.`
