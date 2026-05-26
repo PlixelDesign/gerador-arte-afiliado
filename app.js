@@ -168,16 +168,31 @@ function loadImage(src) {
 // Estratégia: raspar o HTML da página do produto via corsproxy e extrair
 // os dados estruturados (JSON-LD / Open Graph / meta tags).
 
+const PROXY_LIST = [
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  u => `https://thingproxy.freeboard.io/fetch/${u}`,
+]
+
+async function fetchViaAnyProxy(url) {
+  for (const proxyFn of PROXY_LIST) {
+    try {
+      const res = await fetch(proxyFn(url))
+      if (!res.ok) continue
+      const html = await res.text()
+      if (!html.includes('suspicious-traffic-frontend') && html.length > 5000) return html
+    } catch {}
+  }
+  return null
+}
+
 async function fetchProduct(itemId, originalUrl) {
   // Monta URL canônica se não temos a original
   const productUrl = originalUrl || `https://www.mercadolivre.com.br/p/${itemId}`
 
-  const res = await fetch(proxify(productUrl))
-  if (!res.ok) throw new Error(`page:${res.status}`)
-  const html = await res.text()
-
-  if (html.includes('suspicious-traffic-frontend'))
-    throw new Error('bot_detection')
+  const html = await fetchViaAnyProxy(productUrl)
+  if (!html) throw new Error('bot_detection')
 
   // ── Tenta JSON-LD ──────────────────────────────────────────────────────────
   const ldMatches = [...html.matchAll(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi)]
