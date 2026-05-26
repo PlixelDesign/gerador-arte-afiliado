@@ -583,6 +583,57 @@ async function init() {
 
   const saved = localStorage.getItem('ig_handle')
   if (saved && elIgHandle) elIgHandle.value = saved
+
+  // ── Bookmarklet: lê parâmetros da URL (?title=&price=&img=&inst=) ────────────
+  const params = new URLSearchParams(location.search)
+  const pTitle = params.get('title')
+  const pPrice = params.get('price')
+  const pImg   = params.get('img')
+  const pInst  = params.get('inst')
+
+  if (pTitle || pImg) {
+    hide(elErrorMsg)
+
+    if (pTitle) {
+      const [name, subtitle] = splitTitle(pTitle)
+      fields.name.value     = name
+      fields.subtitle.value = subtitle
+    }
+    if (pPrice) {
+      const num = parseFloat(pPrice)
+      fields.price.value = isNaN(num) ? pPrice : formatPrice(num)
+    }
+    if (pInst) fields.installments.value = pInst
+    fields.badge.value = ''
+
+    show(elSectionFields, elSectionTemplates)
+
+    if (pImg) {
+      elProgressBar.style.width   = '0%'
+      elProgressLabel.textContent = 'Processando imagem… 0%'
+      show(elLoadingBg)
+
+      let processedUrl
+      try {
+        processedUrl = await removeProductBackground(pImg)
+      } catch {
+        processedUrl = proxify(pImg)
+        show(elWarningBg)
+      }
+
+      hide(elLoadingBg)
+
+      try {
+        state.productImgEl = await loadImage(processedUrl)
+      } catch {
+        try { state.productImgEl = await loadImage(proxify(pImg)) } catch { state.productImgEl = null }
+      }
+    }
+
+    state.ready = true
+    show(elSectionPreview, elSectionDownload)
+    await renderCanvas()
+  }
 }
 
 init()

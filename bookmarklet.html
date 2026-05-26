@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instalar Atalho — Gerador de Arte</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .bm-card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 28px; max-width: 560px; margin: 0 auto; }
+    .bm-step { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 24px; }
+    .bm-num  { background: #FF4C00; color: #fff; font-weight: 700; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 15px; }
+    .bm-text { color: #ccc; font-size: 15px; line-height: 1.6; }
+    .bm-text strong { color: #fff; }
+    .bm-link-wrap { text-align: center; margin: 32px 0; }
+    .bm-link {
+      display: inline-block;
+      background: linear-gradient(135deg, #FF4C00, #ff7733);
+      color: #fff !important;
+      font-weight: 700;
+      font-size: 17px;
+      padding: 16px 32px;
+      border-radius: 50px;
+      text-decoration: none;
+      box-shadow: 0 4px 24px rgba(255,76,0,0.4);
+      cursor: grab;
+      border: 2px dashed rgba(255,255,255,0.3);
+    }
+    .bm-link:hover { opacity: 0.9; }
+    .bm-hint { color: #888; font-size: 13px; text-align: center; margin-top: 10px; }
+    .bm-divider { border: none; border-top: 1px solid #2a2a2a; margin: 28px 0; }
+    .bm-back { display: inline-block; color: #888; text-decoration: none; font-size: 14px; margin-bottom: 24px; }
+    .bm-back:hover { color: #fff; }
+    .bm-title { font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 8px; }
+    .bm-sub   { color: #888; font-size: 14px; margin-bottom: 28px; }
+  </style>
+</head>
+<body>
+<main style="padding: 32px 16px;">
+
+  <a href="index.html" class="bm-back">← Voltar ao Gerador</a>
+
+  <div class="bm-card">
+    <div class="bm-title">⚡ Instalar Atalho do Gerador</div>
+    <div class="bm-sub">Clique em qualquer produto do ML e o gerador abre com tudo preenchido.</div>
+
+    <div class="bm-link-wrap">
+      <a class="bm-link" id="bm-anchor">🎨 Gerador Arte ML</a>
+      <div class="bm-hint">Arraste esse botão para a sua barra de favoritos</div>
+    </div>
+
+    <hr class="bm-divider">
+
+    <div class="bm-step">
+      <div class="bm-num">1</div>
+      <div class="bm-text">
+        <strong>Mostre a barra de favoritos</strong> no seu navegador.<br>
+        Chrome/Edge: pressione <strong>Ctrl+Shift+B</strong>
+      </div>
+    </div>
+    <div class="bm-step">
+      <div class="bm-num">2</div>
+      <div class="bm-text">
+        <strong>Arraste o botão laranja</strong> acima para a barra de favoritos.<br>
+        Ele vai aparecer lá como um favorito normal.
+      </div>
+    </div>
+    <div class="bm-step">
+      <div class="bm-num">3</div>
+      <div class="bm-text">
+        <strong>Abra qualquer produto</strong> no Mercado Livre normalmente.
+      </div>
+    </div>
+    <div class="bm-step">
+      <div class="bm-num">4</div>
+      <div class="bm-text">
+        <strong>Clique no favorito</strong> "Gerador Arte ML".<br>
+        O gerador vai abrir em uma nova aba com título, preço e imagem já preenchidos! ✅
+      </div>
+    </div>
+
+    <hr class="bm-divider">
+
+    <div class="bm-text" style="font-size:13px; color:#666;">
+      ⚠️ Se o navegador perguntar se pode abrir pop-ups, clique em <strong>Permitir</strong>.
+    </div>
+  </div>
+
+</main>
+
+<script>
+// Gera o código do bookmarklet dinamicamente com a URL correta
+const BASE = 'https://plixeldesign.github.io/gerador-arte-afiliado/'
+
+const code = `javascript:(function(){
+var g='${BASE}';
+try{
+  var nd=document.getElementById('__NEXT_DATA__');
+  if(nd){
+    var d=JSON.parse(nd.textContent),pp=d.props&&d.props.pageProps;
+    var item=pp&&(pp.initialState&&pp.initialState.item||pp.item||pp.pdpInitialState&&pp.pdpInitialState.item);
+    if(item&&item.title){
+      var inst=item.installments;
+      var is=inst?inst.quantity+'x R$'+inst.amount.toFixed(2).replace('.',',')+(inst.rate===0?' SEM JUROS':''):'';
+      var img=(item.pictures&&item.pictures[0]&&item.pictures[0].url)||'';
+      window.open(g+'?title='+encodeURIComponent(item.title)+'&price='+encodeURIComponent(item.price||'')+'&img='+encodeURIComponent(img)+'&inst='+encodeURIComponent(is));
+      return;
+    }
+  }
+}catch(e){}
+try{
+  var ss=document.querySelectorAll('script[type="application/ld+json"]');
+  for(var i=0;i<ss.length;i++){
+    try{
+      var ld=JSON.parse(ss[i].textContent);
+      var pr=Array.isArray(ld)?ld.find(function(x){return x['@type']==='Product'}):(ld['@type']==='Product'?ld:null);
+      if(pr){
+        var pimg=Array.isArray(pr.image)?pr.image[0]:(pr.image||'');
+        var pprice=(pr.offers&&(pr.offers.price||pr.offers.lowPrice))||'';
+        window.open(g+'?title='+encodeURIComponent(pr.name||'')+'&price='+encodeURIComponent(pprice)+'&img='+encodeURIComponent(pimg)+'&inst=');
+        return;
+      }
+    }catch(e2){}
+  }
+}catch(e){}
+var t=document.querySelector('meta[property="og:title"]');
+var im=document.querySelector('meta[property="og:image"]');
+var prc=document.querySelector('meta[itemprop="price"]');
+window.open(g+'?title='+encodeURIComponent(t?t.content:document.title)+'&price='+encodeURIComponent(prc?prc.content:'')+'&img='+encodeURIComponent(im?im.content:'')+'&inst=');
+})()`.replace(/\n/g,'')
+
+document.getElementById('bm-anchor').href = code
+</script>
+</body>
+</html>
