@@ -609,24 +609,27 @@ async function init() {
     show(elSectionFields, elSectionTemplates)
 
     if (pImg) {
+      // ML serve imagens como .webp — converte para .jpg para compatibilidade
+      const imgUrl = pImg.replace(/\.webp(\?.*)?$/i, '.jpg$1')
+
       elProgressBar.style.width   = '0%'
       elProgressLabel.textContent = 'Processando imagem… 0%'
       show(elLoadingBg)
 
       let processedUrl
       try {
-        processedUrl = await removeProductBackground(pImg)
+        processedUrl = await removeProductBackground(imgUrl)
       } catch {
-        processedUrl = proxify(pImg)
+        // Remoção de fundo falhou — usa imagem original via proxy
+        processedUrl = proxify(imgUrl)
         show(elWarningBg)
       }
 
       hide(elLoadingBg)
 
-      try {
-        state.productImgEl = await loadImage(processedUrl)
-      } catch {
-        try { state.productImgEl = await loadImage(proxify(pImg)) } catch { state.productImgEl = null }
+      // Tenta carregar a imagem processada; fallback para proxy direto
+      for (const candidate of [processedUrl, proxify(imgUrl), proxify(pImg)]) {
+        try { state.productImgEl = await loadImage(candidate); break } catch {}
       }
     }
 
