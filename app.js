@@ -8,12 +8,12 @@ const DRAGGABLE_KEYS = ['product', 'product_name', 'product_subtitle', 'installm
 
 function freshTransforms() {
   return {
-    product:          { dx: 0, dy: 0, scale: 1 },
-    product_name:     { dx: 0, dy: 0, scale: 1 },
-    product_subtitle: { dx: 0, dy: 0, scale: 1 },
-    installments:     { dx: 0, dy: 0, scale: 1 },
-    price:            { dx: 0, dy: 0, scale: 1 },
-    badge:            { dx: 0, dy: 0, scale: 1 },
+    product:          { dx: 0, dy: 0, scale: 1, rot: 0 },
+    product_name:     { dx: 0, dy: 0, scale: 1, rot: 0 },
+    product_subtitle: { dx: 0, dy: 0, scale: 1, rot: 0 },
+    installments:     { dx: 0, dy: 0, scale: 1, rot: 0 },
+    price:            { dx: 0, dy: 0, scale: 1, rot: 0 },
+    badge:            { dx: 0, dy: 0, scale: 1, rot: 0 },
   }
 }
 
@@ -52,6 +52,7 @@ const elBtnDownload     = $('btn-download')
 const elWarningBg       = $('warning-bg')
 const elIgHandle        = $('ig-handle')
 const elSizeSlider      = $('size-slider')
+const elRotSlider       = $('rot-slider')
 const elBtnResetPos     = $('btn-reset-pos')
 const elSelLabel        = $('sel-label')
 
@@ -398,52 +399,60 @@ function scaleFont(font, scale) {
   return font.replace(/(\d+(?:\.\d+)?)px/, (_m, n) => `${parseFloat(n) * scale}px`)
 }
 
-// Desenha um campo de texto aplicando o transform manual e devolve a bounding box.
+// Desenha um campo de texto com mover/escalar/girar e devolve a hitbox
+// baseada no centro: { cx, cy, w, h, rot }.
 function drawTextField(ctx, cfg, raw, t) {
   if (!cfg || !raw) return null
-  const text  = cfg.transform === 'uppercase' ? raw.toUpperCase() : raw
-  const scale = t?.scale || 1
-  const x = cfg.x + (t?.dx || 0)
-  const y = cfg.y + (t?.dy || 0)
-  const align = cfg.align || 'left'
+  const text   = cfg.transform === 'uppercase' ? raw.toUpperCase() : raw
+  const scale  = t?.scale || 1
+  const rot    = (t?.rot || 0) * Math.PI / 180
+  const anchorX = cfg.x + (t?.dx || 0)
+  const anchorY = cfg.y + (t?.dy || 0)
+  const align  = cfg.align || 'left'
+  const baseFont = parseFloat(cfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16')
+  const fontSize = baseFont * scale
+  const lineHeight = (cfg.line_height || Math.round(baseFont * 1.25)) * scale
+  const maxW   = cfg.max_width ? cfg.max_width * scale : Infinity
 
+  // 1. Quebra em linhas (medindo, sem desenhar ainda)
   ctx.save()
-  ctx.font         = scaleFont(cfg.font, scale)
+  ctx.font = scaleFont(cfg.font, scale)
+  let lines = []
+  if (cfg.wrap) {
+    let line = ''
+    for (const word of text.split(' ')) {
+      const test = line ? `${line} ${word}` : word
+      if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = word }
+      else { line = test }
+    }
+    if (line) lines.push(line)
+  } else {
+    lines = [text]
+  }
+  let maxLineW = 0
+  for (const ln of lines) maxLineW = Math.max(maxLineW, Math.min(ctx.measureText(ln).width, maxW))
+  const boxH = (lines.length - 1) * lineHeight + fontSize * 1.2
+
+  // 2. Centro da caixa (no espaço sem rotação), ajustado pelo alinhamento
+  let bx = anchorX
+  if (align === 'center') bx = anchorX - maxLineW / 2
+  else if (align === 'right') bx = anchorX - maxLineW
+  const by = anchorY - fontSize
+  const cx = bx + maxLineW / 2
+  const cy = by + boxH / 2
+
+  // 3. Desenha rotacionando em torno do centro
+  ctx.translate(cx, cy)
+  ctx.rotate(rot)
   ctx.fillStyle    = cfg.color
   ctx.textAlign    = align
   ctx.textBaseline = 'alphabetic'
-
-  const fontSize = parseFloat(cfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16') * scale
-
-  let maxLineW = 0, lines = 1
-  if (cfg.wrap) {
-    const lineHeight = (cfg.line_height || Math.round(parseFloat(cfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16') * 1.25)) * scale
-    const maxW = (cfg.max_width || 9999) * scale
-    const words = text.split(' ')
-    let line = '', cy = y
-    lines = 0
-    for (const word of words) {
-      const test = line ? `${line} ${word}` : word
-      if (ctx.measureText(test).width > maxW && line) {
-        ctx.fillText(line, x, cy); maxLineW = Math.max(maxLineW, ctx.measureText(line).width)
-        line = word; cy += lineHeight; lines++
-      } else { line = test }
-    }
-    if (line) { ctx.fillText(line, x, cy); maxLineW = Math.max(maxLineW, ctx.measureText(line).width); lines++ }
-    var boxH = (lines - 1) * lineHeight + fontSize * 1.2
-  } else {
-    ctx.fillText(text, x, y, cfg.max_width ? cfg.max_width * scale : undefined)
-    maxLineW = ctx.measureText(text).width
-    if (cfg.max_width) maxLineW = Math.min(maxLineW, cfg.max_width * scale)
-    var boxH = fontSize * 1.2
-  }
+  const relX = anchorX - cx, relFirstY = anchorY - cy
+  lines.forEach((ln, i) =>
+    ctx.fillText(ln, relX, relFirstY + i * lineHeight, cfg.max_width ? cfg.max_width * scale : undefined))
   ctx.restore()
 
-  // bounding box (canto superior esquerdo), ajustada pelo alinhamento
-  let bx = x
-  if (align === 'center') bx = x - maxLineW / 2
-  else if (align === 'right') bx = x - maxLineW
-  return { x: bx, y: y - fontSize, w: maxLineW, h: boxH }
+  return { cx, cy, w: maxLineW, h: boxH, rot: t?.rot || 0 }
 }
 
 // Desenho síncrono — chamado a cada frame do arraste, então precisa ser rápido
@@ -473,7 +482,7 @@ function drawScene() {
   const f = tpl.fields
   const T = state.transforms
 
-  // 2. Produto — auto-encaixe na zona + transform manual (arraste/tamanho)
+  // 2. Produto — auto-encaixe na zona + mover/escalar/girar
   if (state.productImgEl) {
     const z   = tpl.product_zone
     const img = state.productImgEl
@@ -483,10 +492,12 @@ function drawScene() {
     const drawH = img.height * baseScale * t.scale
     const cx = z.x + z.w / 2 + t.dx        // centro da zona + deslocamento manual
     const cy = z.y + z.h / 2 + t.dy
-    const drawX = cx - drawW / 2
-    const drawY = cy - drawH / 2
-    ctx.drawImage(img, drawX, drawY, drawW, drawH)
-    hits.push({ key: 'product', x: drawX, y: drawY, w: drawW, h: drawH })
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate((t.rot || 0) * Math.PI / 180)
+    ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH)
+    ctx.restore()
+    hits.push({ key: 'product', cx, cy, w: drawW, h: drawH, rot: t.rot || 0 })
   }
 
   // 3. Campos de texto (sempre por cima do produto)
@@ -508,31 +519,35 @@ function drawScene() {
     const t = T.badge
     const scale = t.scale || 1
     const text = badgeCfg.transform === 'uppercase' ? badgeVal.toUpperCase() : badgeVal
-    const bx = badgeCfg.cx + t.dx, by = badgeCfg.cy + t.dy
+    const cx = badgeCfg.cx + t.dx, cy = badgeCfg.cy + t.dy
     ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate((t.rot || 0) * Math.PI / 180)
     ctx.font         = scaleFont(badgeCfg.font, scale)
     ctx.fillStyle    = badgeCfg.color
     ctx.textAlign    = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(text, bx, by, badgeCfg.max_width)
-    const bw = Math.min(ctx.measureText(text).width, badgeCfg.max_width || 9999)
+    ctx.fillText(text, 0, 0, badgeCfg.max_width ? badgeCfg.max_width * scale : undefined)
+    const bw = Math.min(ctx.measureText(text).width, (badgeCfg.max_width || 9999) * scale)
     const bh = parseFloat(badgeCfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16') * scale * 1.2
     ctx.restore()
-    hits.push({ key: 'badge', x: bx - bw / 2, y: by - bh / 2, w: bw, h: bh })
+    hits.push({ key: 'badge', cx, cy, w: bw, h: bh, rot: t.rot || 0 })
   }
 
   state.hitboxes = hits
 
   // 5. Contorno do elemento selecionado (não entra no PNG final — redesenhado p/ download)
   if (state.selected) {
-    const box = hits.find(b => b.key === state.selected)
-    if (box) {
+    const b = hits.find(x => x.key === state.selected)
+    if (b) {
       const pad = 8
       ctx.save()
+      ctx.translate(b.cx, b.cy)
+      ctx.rotate((b.rot || 0) * Math.PI / 180)
       ctx.strokeStyle = '#f97316'
       ctx.lineWidth = Math.max(2, w / 400)
       ctx.setLineDash([12, 8])
-      ctx.strokeRect(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2)
+      ctx.strokeRect(-b.w / 2 - pad, -b.h / 2 - pad, b.w + pad * 2, b.h + pad * 2)
       ctx.restore()
     }
   }
@@ -541,11 +556,10 @@ function drawScene() {
 function resetTransform() {
   state.transforms = freshTransforms()
   state.selected = null
-  if (elSizeSlider) { elSizeSlider.value = '1'; elSizeSlider.disabled = true }
   syncSelectionUI()
 }
 
-// Atualiza o rótulo/slider conforme o elemento selecionado
+// Atualiza o rótulo/sliders conforme o elemento selecionado
 function syncSelectionUI() {
   const labels = {
     product: 'Produto', product_name: 'Nome', product_subtitle: 'Subtítulo',
@@ -556,9 +570,14 @@ function syncSelectionUI() {
       ? `Selecionado: ${labels[state.selected] || state.selected}`
       : 'Toque num elemento para selecionar'
   }
+  const t = state.selected ? state.transforms[state.selected] : null
   if (elSizeSlider) {
-    elSizeSlider.disabled = !state.selected
-    if (state.selected) elSizeSlider.value = String(state.transforms[state.selected].scale)
+    elSizeSlider.disabled = !t
+    elSizeSlider.value = t ? String(t.scale) : '1'
+  }
+  if (elRotSlider) {
+    elRotSlider.disabled = !t
+    elRotSlider.value = t ? String(t.rot) : '0'
   }
 }
 
@@ -788,13 +807,17 @@ function canvasCoords(e) {
   }
 }
 
-// Acha o elemento sob o ponto — itera de cima para baixo (texto vence o produto)
+// Acha o elemento sob o ponto — itera de cima para baixo (texto vence o produto).
+// Transforma o ponto para o espaço local do elemento (desfazendo a rotação).
 function hitTest(p) {
   const pad = 6
   for (let i = state.hitboxes.length - 1; i >= 0; i--) {
     const b = state.hitboxes[i]
-    if (p.x >= b.x - pad && p.x <= b.x + b.w + pad &&
-        p.y >= b.y - pad && p.y <= b.y + b.h + pad) return b.key
+    const rad = -(b.rot || 0) * Math.PI / 180
+    const dx = p.x - b.cx, dy = p.y - b.cy
+    const lx = dx * Math.cos(rad) - dy * Math.sin(rad)
+    const ly = dx * Math.sin(rad) + dy * Math.cos(rad)
+    if (Math.abs(lx) <= b.w / 2 + pad && Math.abs(ly) <= b.h / 2 + pad) return b.key
   }
   return null
 }
@@ -847,6 +870,13 @@ elCanvas.addEventListener('pointercancel', endDrag)
 elSizeSlider?.addEventListener('input', () => {
   if (!state.selected) return
   state.transforms[state.selected].scale = parseFloat(elSizeSlider.value)
+  drawScene()
+})
+
+// Slider de rotação — afeta o elemento selecionado
+elRotSlider?.addEventListener('input', () => {
+  if (!state.selected) return
+  state.transforms[state.selected].rot = parseFloat(elRotSlider.value)
   drawScene()
 })
 

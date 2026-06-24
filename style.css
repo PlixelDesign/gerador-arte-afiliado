@@ -392,6 +392,8 @@ main {
   gap: 0.75rem;
 }
 
+.pos-row .label { min-width: 56px; }
+
 .size-slider {
   flex: 1;
   accent-color: var(--accent);
