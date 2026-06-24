@@ -1,11 +1,7 @@
-import { removeBackground } from
-  'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/index.mjs'
-
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const CORS_PROXY    = 'https://corsproxy.io/?'
 const WORKER_URL    = 'https://spring-night-4416.danielspsg.workers.dev'
-const IMGLY_PATH    = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/'
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -15,6 +11,9 @@ const state = {
   templateConfig:  null,
   selectedTpl:     'T1',
   ready:           false,
+  tplImg:          null,   // cached template image for the current render
+  productRect:     null,   // last drawn product rect (canvas px) for hit-testing
+  productTransform: { dx: 0, dy: 0, scale: 1 }, // manual offset/scale over auto-fit
 }
 
 // ── DOM ──────────────────────────────────────────────────────────────────────
@@ -37,6 +36,8 @@ const elCanvas          = $('main-canvas')
 const elBtnDownload     = $('btn-download')
 const elWarningBg       = $('warning-bg')
 const elIgHandle        = $('ig-handle')
+const elSizeSlider      = $('size-slider')
+const elBtnResetPos     = $('btn-reset-pos')
 
 const fields = {
   name:         $('f-name'),
@@ -163,6 +164,30 @@ function loadImage(src) {
   })
 }
 
+// Baixa a imagem do produto como blob PNG, com CORS resolvido.
+// images.weserv.nl é um proxy de imagem dedicado: manda Access-Control-Allow-Origin,
+// é estável e converte qualquer formato (inclusive webp) para PNG com &output=png.
+async function fetchImageBlob(url) {
+  const weserv = 'https://images.weserv.nl/?url=' +
+    encodeURIComponent(url.replace(/^https?:\/\//, '')) + '&output=png'
+  try {
+    const r = await fetch(weserv)
+    if (r.ok) {
+      const b = await r.blob()
+      if (b && b.size > 0) return b
+    }
+  } catch {}
+
+  // Reserva: proxies genéricos (menos confiáveis, mas servem de rede de segurança)
+  for (const proxyFn of PROXY_LIST) {
+    try {
+      const r = await fetch(proxyFn(url))
+      if (r.ok) { const b = await r.blob(); if (b?.size > 0) return b }
+    } catch {}
+  }
+  return null
+}
+
 // ── ML API ────────────────────────────────────────────────────────────────────
 // ML bloqueia /items/{id} de terceiros mesmo com OAuth.
 // Estratégia: raspar o HTML da página do produto via corsproxy e extrair
@@ -247,13 +272,15 @@ async function removeWhiteBackground(blob) {
 
   const imageData = ctx.getImageData(0, 0, w, h)
   const data = imageData.data
-  const threshold = 230
 
-  // Considera pixel "claro" (fundo): já transparente ou RGB todos acima do threshold
+  // Considera pixel "fundo": já transparente, OU claro e quase-acromático
+  // (branco/cinza). A checagem (max-min) pequena evita comer cores vivas do produto.
   const isLight = idx => {
     const base = idx * 4
-    return data[base + 3] < 20 ||
-      (data[base] >= threshold && data[base + 1] >= threshold && data[base + 2] >= threshold)
+    if (data[base + 3] < 20) return true
+    const r = data[base], g = data[base + 1], b = data[base + 2]
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b)
+    return mn >= 232 && (mx - mn) <= 22
   }
 
   const visited = new Uint8Array(w * h)
@@ -283,118 +310,121 @@ async function removeWhiteBackground(blob) {
   return new Promise(res => canvas.toBlob(res, 'image/png'))
 }
 
-async function removeProductBackground(originalUrl) {
-  // Fetch image as blob via proxy to sidestep CORS on canvas + the WASM fetcher
-  let blob
+// Recebe o blob original e devolve { blob, removed }.
+// Fundo branco → flood-fill resolve de forma confiável e rápida.
+async function processProductImage(blob) {
   try {
-    const res = await fetch(proxify(originalUrl))
-    if (!res.ok) throw new Error()
-    blob = await res.blob()
-  } catch {
-    // Direct fallback
-    const res = await fetch(originalUrl, { mode: 'cors' })
-    blob = await res.blob()
-  }
-
-  try {
-    const result = await removeBackground(blob, {
-      publicPath: IMGLY_PATH,
-      progress: (_key, current, total) => {
-        if (total <= 0) return
-        const pct = Math.round((current / total) * 100)
-        elProgressBar.style.width = `${pct}%`
-        elProgressLabel.textContent = `Processando imagem… ${pct}%`
-      },
-    })
-    return URL.createObjectURL(result)
-  } catch {
-    // @imgly falhou → tenta remoção local por flood-fill
-    elProgressLabel.textContent = 'Removendo fundo… (modo local)'
-    const result = await removeWhiteBackground(blob)
-    return URL.createObjectURL(result)
-  }
+    const out = await removeWhiteBackground(blob)
+    if (out && out.size > 0) return { blob: out, removed: true }
+  } catch {}
+  return { blob, removed: false }
 }
 
 // ── Canvas rendering ──────────────────────────────────────────────────────────
 
+const tplCache = new Map()
+
+async function getTemplateImg(file) {
+  if (tplCache.has(file)) return tplCache.get(file)
+  try {
+    const img = await loadImage(file)
+    tplCache.set(file, img)
+    return img
+  } catch {
+    tplCache.set(file, null)
+    return null
+  }
+}
+
+// Carrega o template (cacheado) + fontes e então desenha. Use para o render "completo".
 async function renderCanvas() {
   if (!state.ready || !state.templateConfig) return
-
   const tpl = state.templateConfig[state.selectedTpl]
+  if (!tpl || tpl.placeholder) return
+  await document.fonts.ready
+  state.tplImg = await getTemplateImg(tpl.file)
+  drawScene()
+}
+
+function drawTextField(ctx, cfg, raw) {
+  if (!cfg || !raw) return
+  const text = cfg.transform === 'uppercase' ? raw.toUpperCase() : raw
+  ctx.save()
+  ctx.font         = cfg.font
+  ctx.fillStyle    = cfg.color
+  ctx.textAlign    = cfg.align || 'left'
+  ctx.textBaseline = 'alphabetic'
+
+  if (cfg.wrap) {
+    const fontSize   = parseFloat(cfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16')
+    const lineHeight = cfg.line_height || Math.round(fontSize * 1.25)
+    const maxW       = cfg.max_width || 9999
+    const words      = text.split(' ')
+    let line = '', y = cfg.y
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word
+      if (ctx.measureText(test).width > maxW && line) {
+        ctx.fillText(line, cfg.x, y)
+        line = word; y += lineHeight
+      } else { line = test }
+    }
+    if (line) ctx.fillText(line, cfg.x, y)
+  } else {
+    ctx.fillText(text, cfg.x, cfg.y, cfg.max_width)
+  }
+  ctx.restore()
+}
+
+// Desenho síncrono — chamado a cada frame do arraste, então precisa ser rápido
+// (usa o template já cacheado em state.tplImg).
+function drawScene() {
+  const tpl = state.templateConfig?.[state.selectedTpl]
   if (!tpl || tpl.placeholder) return
 
   const { w, h } = tpl.dimensions
-  elCanvas.width  = w
-  elCanvas.height = h
+  if (elCanvas.width  !== w) elCanvas.width  = w
+  if (elCanvas.height !== h) elCanvas.height = h
 
   const ctx = elCanvas.getContext('2d')
   ctx.clearRect(0, 0, w, h)
 
-  await document.fonts.ready
-
-  // 1. Template background
-  try {
-    const tplImg = await loadImage(tpl.file)
-    ctx.drawImage(tplImg, 0, 0, w, h)
-  } catch {
-    ctx.fillStyle = '#1a1a1a'
-    ctx.fillRect(0, 0, w, h)
-    ctx.fillStyle = '#555'
-    ctx.font = 'bold 48px sans-serif'
+  // 1. Template
+  if (state.tplImg) {
+    ctx.drawImage(state.tplImg, 0, 0, w, h)
+  } else {
+    ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = '#555'; ctx.font = 'bold 48px sans-serif'
     ctx.textAlign = 'center'
     ctx.fillText(`Template ${state.selectedTpl}`, w / 2, h / 2)
   }
 
   const f = tpl.fields
 
-  // 2. Produto (por baixo do texto — texto fica por cima sempre)
+  // 2. Produto — auto-encaixe na zona + transform manual (arraste/tamanho)
   if (state.productImgEl) {
-    const z     = tpl.product_zone
-    const img   = state.productImgEl
-    const scale = Math.min(z.w / img.width, z.h / img.height)
-    const pw    = img.width  * scale
-    const ph    = img.height * scale
-    const px    = z.x + (z.w - pw) / 2
-    const py    = z.y + (z.h - ph) / 2
-    ctx.drawImage(img, px, py, pw, ph)
+    const z   = tpl.product_zone
+    const img = state.productImgEl
+    const baseScale = Math.min(z.w / img.width, z.h / img.height)
+    const t   = state.productTransform
+    const drawW = img.width  * baseScale * t.scale
+    const drawH = img.height * baseScale * t.scale
+    const cx = z.x + z.w / 2 + t.dx        // centro da zona + deslocamento manual
+    const cy = z.y + z.h / 2 + t.dy
+    const drawX = cx - drawW / 2
+    const drawY = cy - drawH / 2
+    ctx.drawImage(img, drawX, drawY, drawW, drawH)
+    state.productRect = { x: drawX, y: drawY, w: drawW, h: drawH }
+  } else {
+    state.productRect = null
   }
 
-  // 3–6. Campos de texto (sempre por cima do produto)
-  function drawTextField(cfg, raw) {
-    if (!cfg || !raw) return
-    const text = cfg.transform === 'uppercase' ? raw.toUpperCase() : raw
-    ctx.save()
-    ctx.font         = cfg.font
-    ctx.fillStyle    = cfg.color
-    ctx.textAlign    = cfg.align || 'left'
-    ctx.textBaseline = 'alphabetic'
+  // 3. Campos de texto (sempre por cima do produto)
+  drawTextField(ctx, f.product_name,     fields.name.value)
+  drawTextField(ctx, f.product_subtitle, fields.subtitle.value)
+  drawTextField(ctx, f.installments,     fields.installments.value)
+  drawTextField(ctx, f.price,            fields.price.value)
 
-    if (cfg.wrap) {
-      const fontSize   = parseFloat(cfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16')
-      const lineHeight = cfg.line_height || Math.round(fontSize * 1.25)
-      const maxW       = cfg.max_width || 9999
-      const words      = text.split(' ')
-      let line = '', y = cfg.y
-      for (const word of words) {
-        const test = line ? `${line} ${word}` : word
-        if (ctx.measureText(test).width > maxW && line) {
-          ctx.fillText(line, cfg.x, y)
-          line = word; y += lineHeight
-        } else { line = test }
-      }
-      if (line) ctx.fillText(line, cfg.x, y)
-    } else {
-      ctx.fillText(text, cfg.x, cfg.y, cfg.max_width)
-    }
-    ctx.restore()
-  }
-
-  drawTextField(f.product_name,     fields.name.value)
-  drawTextField(f.product_subtitle, fields.subtitle.value)
-  drawTextField(f.installments,     fields.installments.value)
-  drawTextField(f.price,            fields.price.value)
-
-  // Badge (centralizado no elemento circular do template)
+  // 4. Badge (centralizado no elemento circular do template)
   const badgeCfg = f.badge
   const badgeVal = fields.badge.value.trim()
   if (badgeCfg && badgeVal) {
@@ -409,7 +439,13 @@ async function renderCanvas() {
   }
 }
 
-const debouncedRender = debounce(renderCanvas, 250)
+function resetTransform() {
+  state.productTransform = { dx: 0, dy: 0, scale: 1 }
+  if (elSizeSlider) elSizeSlider.value = '1'
+}
+
+// Os campos de texto só mudam o desenho — não precisam recarregar template/fontes
+const debouncedRender = debounce(() => drawScene(), 150)
 
 // ── Template grid ─────────────────────────────────────────────────────────────
 
@@ -491,6 +527,7 @@ function selectTemplate(id) {
   document.querySelectorAll('.tpl-item').forEach(el => {
     el.classList.toggle('tpl-item--active', el.dataset.id === id)
   })
+  resetTransform()   // a zona muda entre templates → recomeça centralizado
   renderCanvas()
 }
 
@@ -500,6 +537,7 @@ async function handleFetch() {
   hide(elErrorMsg, elWarningBg, elSectionFields, elSectionTemplates, elSectionPreview, elSectionDownload)
   state.ready = false
   state.productImgEl = null
+  resetTransform()
 
   const rawUrl = elUrl.value.trim()
   show(elLoadingProduct)
@@ -559,33 +597,31 @@ async function handleFetch() {
 
   show(elSectionFields, elSectionTemplates)
 
-  // — Step 3: remove background
+  // — Step 3: baixa imagem (weserv → blob PNG) e remove fundo branco
   const imgUrl = product.pictures?.[0]?.url
   if (imgUrl) {
-    elProgressBar.style.width   = '0%'
-    elProgressLabel.textContent = 'Processando imagem… 0%'
+    elProgressBar.style.width   = '100%'
+    elProgressLabel.textContent = 'Baixando imagem…'
     show(elLoadingBg)
 
-    let processedUrl
-    try {
-      processedUrl        = await removeProductBackground(imgUrl)
-    } catch {
-      // Background removal failed — use proxied original so canvas isn't tainted
-      processedUrl        = proxify(imgUrl)
+    const srcBlob = await fetchImageBlob(imgUrl)
+    let finalBlob = srcBlob
+    if (srcBlob) {
+      elProgressLabel.textContent = 'Removendo fundo…'
+      const { blob, removed } = await processProductImage(srcBlob)
+      finalBlob = blob
+      if (!removed) show(elWarningBg)
+    } else {
       show(elWarningBg)
     }
 
     hide(elLoadingBg)
 
-    // Load resulting image element for drawImage
+    const finalUrl = finalBlob ? URL.createObjectURL(finalBlob) : proxify(imgUrl)
     try {
-      state.productImgEl = await loadImage(processedUrl)
+      state.productImgEl = await loadImage(finalUrl)
     } catch {
-      try {
-        state.productImgEl = await loadImage(proxify(imgUrl))
-      } catch {
-        state.productImgEl = null
-      }
+      state.productImgEl = null
     }
   }
 
@@ -616,6 +652,72 @@ elUrl.addEventListener('keydown', e => e.key === 'Enter' && handleFetch())
 Object.values(fields).forEach(input => input.addEventListener('input', debouncedRender))
 
 elIgHandle?.addEventListener('input', () => localStorage.setItem('ig_handle', elIgHandle.value))
+
+// ── Posicionamento interativo do produto (arrastar + redimensionar) ───────────
+
+// Converte coordenadas do ponteiro (CSS px na tela) para coordenadas do canvas (px reais)
+function canvasCoords(e) {
+  const rect = elCanvas.getBoundingClientRect()
+  return {
+    x: (e.clientX - rect.left) * (elCanvas.width  / rect.width),
+    y: (e.clientY - rect.top)  * (elCanvas.height / rect.height),
+  }
+}
+
+function pointInProduct(p) {
+  const r = state.productRect
+  return r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
+}
+
+let dragging  = false
+let dragStart = null   // { x, y, dx0, dy0 }
+
+elCanvas.addEventListener('pointerdown', e => {
+  if (!state.productImgEl) return
+  const p = canvasCoords(e)
+  if (!pointInProduct(p)) return
+  dragging  = true
+  dragStart = { x: p.x, y: p.y, dx0: state.productTransform.dx, dy0: state.productTransform.dy }
+  elCanvas.setPointerCapture(e.pointerId)
+  elCanvas.style.cursor = 'grabbing'
+  e.preventDefault()
+})
+
+elCanvas.addEventListener('pointermove', e => {
+  if (!dragging) {
+    // feedback de cursor: "mãozinha" sobre o produto
+    if (state.productImgEl) {
+      elCanvas.style.cursor = pointInProduct(canvasCoords(e)) ? 'grab' : 'default'
+    }
+    return
+  }
+  const p = canvasCoords(e)
+  state.productTransform.dx = dragStart.dx0 + (p.x - dragStart.x)
+  state.productTransform.dy = dragStart.dy0 + (p.y - dragStart.y)
+  drawScene()
+  e.preventDefault()
+})
+
+function endDrag(e) {
+  if (!dragging) return
+  dragging = false
+  elCanvas.style.cursor = 'grab'
+  try { elCanvas.releasePointerCapture(e.pointerId) } catch {}
+}
+elCanvas.addEventListener('pointerup', endDrag)
+elCanvas.addEventListener('pointercancel', endDrag)
+
+// Slider de tamanho
+elSizeSlider?.addEventListener('input', () => {
+  state.productTransform.scale = parseFloat(elSizeSlider.value)
+  drawScene()
+})
+
+// Resetar posição e tamanho
+elBtnResetPos?.addEventListener('click', () => {
+  resetTransform()
+  drawScene()
+})
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -657,74 +759,30 @@ async function init() {
     show(elSectionFields, elSectionTemplates)
 
     if (pImg) {
-      elProgressBar.style.width   = '0%'
-      elProgressLabel.textContent = 'Processando imagem… 0%'
+      elProgressBar.style.width   = '100%'
+      elProgressLabel.textContent = 'Baixando imagem…'
       show(elLoadingBg)
 
-      // 1. Busca imagem via proxy → blob local (resolve CORS e qualquer formato)
-      let srcBlob = null
-      for (const proxyFn of PROXY_LIST) {
-        try {
-          const r = await fetch(proxyFn(pImg))
-          if (r.ok) { srcBlob = await r.blob(); break }
-        } catch {}
-      }
+      // 1. Baixa via weserv → blob PNG (CORS resolvido, webp convertido)
+      const srcBlob = await fetchImageBlob(pImg)
 
-      // 2. Se webp, converte para PNG via canvas offscreen (compatibilidade com bg-removal)
-      if (srcBlob?.type?.includes('webp') || pImg.endsWith('.webp')) {
-        try {
-          const tmpUrl = URL.createObjectURL(srcBlob)
-          const tmpImg = await new Promise((res, rej) => {
-            const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = tmpUrl
-          })
-          URL.revokeObjectURL(tmpUrl)
-          const tc = document.createElement('canvas')
-          tc.width = tmpImg.naturalWidth; tc.height = tmpImg.naturalHeight
-          tc.getContext('2d').drawImage(tmpImg, 0, 0)
-          srcBlob = await new Promise(res => tc.toBlob(res, 'image/png'))
-        } catch {}
-      }
-
-      // 3. Tenta remover fundo
-      let finalUrl
+      // 2. Remove o fundo branco por flood-fill
+      let finalBlob = srcBlob
       if (srcBlob) {
-        try {
-          const result = await removeBackground(srcBlob, {
-            publicPath: IMGLY_PATH,
-            progress: (_k, cur, tot) => {
-              if (tot <= 0) return
-              const pct = Math.round((cur / tot) * 100)
-              elProgressBar.style.width = `${pct}%`
-              elProgressLabel.textContent = `Processando imagem… ${pct}%`
-            }
-          })
-          finalUrl = URL.createObjectURL(result)
-        } catch {
-          // @imgly falhou → tenta remoção local por flood-fill de fundo branco
-          try {
-            elProgressLabel.textContent = 'Removendo fundo… (modo local)'
-            const result = await removeWhiteBackground(srcBlob)
-            finalUrl = URL.createObjectURL(result)
-          } catch {
-            finalUrl = URL.createObjectURL(srcBlob)
-            show(elWarningBg)
-          }
-        }
+        elProgressLabel.textContent = 'Removendo fundo…'
+        const { blob, removed } = await processProductImage(srcBlob)
+        finalBlob = blob
+        if (!removed) show(elWarningBg)
       } else {
-        finalUrl = proxify(pImg)
         show(elWarningBg)
       }
 
       hide(elLoadingBg)
 
-      // 4. Carrega imagem — blob URLs são same-origin, não poluem o canvas
+      // 3. Carrega imagem — blob URLs são same-origin, não poluem o canvas
+      const finalUrl = finalBlob ? URL.createObjectURL(finalBlob) : proxify(pImg)
       try {
-        state.productImgEl = await new Promise((res, rej) => {
-          const img = new Image()
-          img.onload = () => res(img)
-          img.onerror = rej
-          img.src = finalUrl
-        })
+        state.productImgEl = await loadImage(finalUrl)
       } catch { state.productImgEl = null }
     }
 

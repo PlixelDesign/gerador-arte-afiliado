@@ -86,6 +86,15 @@
     <div class="canvas-wrap">
       <canvas id="main-canvas"></canvas>
     </div>
+    <div class="pos-controls">
+      <span class="pos-hint">🖐️ Arraste o produto na imagem para reposicionar</span>
+      <div class="pos-row">
+        <label class="label" for="size-slider">Tamanho</label>
+        <input type="range" id="size-slider" class="size-slider"
+               min="0.3" max="2.5" step="0.01" value="1">
+        <button id="btn-reset-pos" class="btn-reset" type="button">↺ Resetar</button>
+      </div>
+    </div>
   </section>
 
   <section class="section hidden" id="section-download">
