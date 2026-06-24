@@ -87,12 +87,13 @@
       <canvas id="main-canvas"></canvas>
     </div>
     <div class="pos-controls">
-      <span class="pos-hint">🖐️ Arraste o produto na imagem para reposicionar</span>
+      <span class="pos-hint">🖐️ Toque num elemento e arraste para mover. O slider muda o tamanho do que estiver selecionado.</span>
+      <span class="sel-label" id="sel-label">Toque num elemento para selecionar</span>
       <div class="pos-row">
         <label class="label" for="size-slider">Tamanho</label>
         <input type="range" id="size-slider" class="size-slider"
-               min="0.3" max="2.5" step="0.01" value="1">
-        <button id="btn-reset-pos" class="btn-reset" type="button">↺ Resetar</button>
+               min="0.3" max="2.5" step="0.01" value="1" disabled>
+        <button id="btn-reset-pos" class="btn-reset" type="button">↺ Resetar tudo</button>
       </div>
     </div>
   </section>

@@ -3,6 +3,20 @@
 const CORS_PROXY    = 'https://corsproxy.io/?'
 const WORKER_URL    = 'https://spring-night-4416.danielspsg.workers.dev'
 
+// Elementos arrastáveis/selecionáveis (ordem = de baixo p/ cima no desenho)
+const DRAGGABLE_KEYS = ['product', 'product_name', 'product_subtitle', 'installments', 'price', 'badge']
+
+function freshTransforms() {
+  return {
+    product:          { dx: 0, dy: 0, scale: 1 },
+    product_name:     { dx: 0, dy: 0, scale: 1 },
+    product_subtitle: { dx: 0, dy: 0, scale: 1 },
+    installments:     { dx: 0, dy: 0, scale: 1 },
+    price:            { dx: 0, dy: 0, scale: 1 },
+    badge:            { dx: 0, dy: 0, scale: 1 },
+  }
+}
+
 // ── State ────────────────────────────────────────────────────────────────────
 
 const state = {
@@ -12,8 +26,9 @@ const state = {
   selectedTpl:     'T1',
   ready:           false,
   tplImg:          null,   // cached template image for the current render
-  productRect:     null,   // last drawn product rect (canvas px) for hit-testing
-  productTransform: { dx: 0, dy: 0, scale: 1 }, // manual offset/scale over auto-fit
+  hitboxes:        [],     // [{ key, x, y, w, h }] em px do canvas, p/ hit-testing
+  selected:        null,   // chave do elemento selecionado (DRAGGABLE_KEYS)
+  transforms:      freshTransforms(), // deslocamento/escala manual por elemento
 }
 
 // ── DOM ──────────────────────────────────────────────────────────────────────
@@ -38,6 +53,7 @@ const elWarningBg       = $('warning-bg')
 const elIgHandle        = $('ig-handle')
 const elSizeSlider      = $('size-slider')
 const elBtnResetPos     = $('btn-reset-pos')
+const elSelLabel        = $('sel-label')
 
 const fields = {
   name:         $('f-name'),
@@ -310,13 +326,44 @@ async function removeWhiteBackground(blob) {
   return new Promise(res => canvas.toBlob(res, 'image/png'))
 }
 
-// Recebe o blob original e devolve { blob, removed }.
-// Fundo branco → flood-fill resolve de forma confiável e rápida.
+// Carrega o @imgly sob demanda. Importante: usamos esm.sh, que resolve a árvore
+// de dependências (onnxruntime-web etc.) — o build do jsDelivr não resolve esses
+// imports "bare" no navegador, e era por isso que a remoção por IA nunca funcionava.
+let _removeBgFn = null
+async function getRemoveBg() {
+  if (_removeBgFn) return _removeBgFn
+  const mod = await import('https://esm.sh/@imgly/background-removal@1.7.0')
+  _removeBgFn = mod.removeBackground
+  return _removeBgFn
+}
+
+// Recebe o blob original e devolve { blob, removed, method }.
+// 1º) IA (@imgly): entende produto vs fundo — não come detalhes brancos do produto.
+// 2º) flood-fill: reserva confiável para fotos de fundo branco.
 async function processProductImage(blob) {
   try {
-    const out = await removeWhiteBackground(blob)
-    if (out && out.size > 0) return { blob: out, removed: true }
+    elProgressLabel.textContent = 'Carregando IA de recorte…'
+    const removeBackground = await getRemoveBg()
+    // Sem publicPath: usa o CDN de modelos padrão da lib (resolvido pelo esm.sh)
+    const out = await removeBackground(blob, {
+      progress: (key, current, total) => {
+        if (total <= 0) return
+        const pct = Math.round((current / total) * 100)
+        elProgressBar.style.width = `${pct}%`
+        const stage = /fetch/i.test(key) ? 'Baixando modelo de IA' : 'Removendo fundo com IA'
+        elProgressLabel.textContent = `${stage}… ${pct}%`
+      },
+    })
+    if (out && out.size > 0) return { blob: out, removed: true, method: 'ai' }
   } catch {}
+
+  // IA indisponível → flood-fill de fundo branco
+  try {
+    elProgressLabel.textContent = 'Removendo fundo…'
+    const out = await removeWhiteBackground(blob)
+    if (out && out.size > 0) return { blob: out, removed: true, method: 'floodfill' }
+  } catch {}
+
   return { blob, removed: false }
 }
 
@@ -346,33 +393,57 @@ async function renderCanvas() {
   drawScene()
 }
 
-function drawTextField(ctx, cfg, raw) {
-  if (!cfg || !raw) return
-  const text = cfg.transform === 'uppercase' ? raw.toUpperCase() : raw
+// Escala o tamanho de fonte dentro de uma string de fonte CSS ("bold 52px Impact")
+function scaleFont(font, scale) {
+  return font.replace(/(\d+(?:\.\d+)?)px/, (_m, n) => `${parseFloat(n) * scale}px`)
+}
+
+// Desenha um campo de texto aplicando o transform manual e devolve a bounding box.
+function drawTextField(ctx, cfg, raw, t) {
+  if (!cfg || !raw) return null
+  const text  = cfg.transform === 'uppercase' ? raw.toUpperCase() : raw
+  const scale = t?.scale || 1
+  const x = cfg.x + (t?.dx || 0)
+  const y = cfg.y + (t?.dy || 0)
+  const align = cfg.align || 'left'
+
   ctx.save()
-  ctx.font         = cfg.font
+  ctx.font         = scaleFont(cfg.font, scale)
   ctx.fillStyle    = cfg.color
-  ctx.textAlign    = cfg.align || 'left'
+  ctx.textAlign    = align
   ctx.textBaseline = 'alphabetic'
 
+  const fontSize = parseFloat(cfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16') * scale
+
+  let maxLineW = 0, lines = 1
   if (cfg.wrap) {
-    const fontSize   = parseFloat(cfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16')
-    const lineHeight = cfg.line_height || Math.round(fontSize * 1.25)
-    const maxW       = cfg.max_width || 9999
-    const words      = text.split(' ')
-    let line = '', y = cfg.y
+    const lineHeight = (cfg.line_height || Math.round(parseFloat(cfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16') * 1.25)) * scale
+    const maxW = (cfg.max_width || 9999) * scale
+    const words = text.split(' ')
+    let line = '', cy = y
+    lines = 0
     for (const word of words) {
       const test = line ? `${line} ${word}` : word
       if (ctx.measureText(test).width > maxW && line) {
-        ctx.fillText(line, cfg.x, y)
-        line = word; y += lineHeight
+        ctx.fillText(line, x, cy); maxLineW = Math.max(maxLineW, ctx.measureText(line).width)
+        line = word; cy += lineHeight; lines++
       } else { line = test }
     }
-    if (line) ctx.fillText(line, cfg.x, y)
+    if (line) { ctx.fillText(line, x, cy); maxLineW = Math.max(maxLineW, ctx.measureText(line).width); lines++ }
+    var boxH = (lines - 1) * lineHeight + fontSize * 1.2
   } else {
-    ctx.fillText(text, cfg.x, cfg.y, cfg.max_width)
+    ctx.fillText(text, x, y, cfg.max_width ? cfg.max_width * scale : undefined)
+    maxLineW = ctx.measureText(text).width
+    if (cfg.max_width) maxLineW = Math.min(maxLineW, cfg.max_width * scale)
+    var boxH = fontSize * 1.2
   }
   ctx.restore()
+
+  // bounding box (canto superior esquerdo), ajustada pelo alinhamento
+  let bx = x
+  if (align === 'center') bx = x - maxLineW / 2
+  else if (align === 'right') bx = x - maxLineW
+  return { x: bx, y: y - fontSize, w: maxLineW, h: boxH }
 }
 
 // Desenho síncrono — chamado a cada frame do arraste, então precisa ser rápido
@@ -387,6 +458,7 @@ function drawScene() {
 
   const ctx = elCanvas.getContext('2d')
   ctx.clearRect(0, 0, w, h)
+  const hits = []
 
   // 1. Template
   if (state.tplImg) {
@@ -399,13 +471,14 @@ function drawScene() {
   }
 
   const f = tpl.fields
+  const T = state.transforms
 
   // 2. Produto — auto-encaixe na zona + transform manual (arraste/tamanho)
   if (state.productImgEl) {
     const z   = tpl.product_zone
     const img = state.productImgEl
     const baseScale = Math.min(z.w / img.width, z.h / img.height)
-    const t   = state.productTransform
+    const t   = T.product
     const drawW = img.width  * baseScale * t.scale
     const drawH = img.height * baseScale * t.scale
     const cx = z.x + z.w / 2 + t.dx        // centro da zona + deslocamento manual
@@ -413,35 +486,80 @@ function drawScene() {
     const drawX = cx - drawW / 2
     const drawY = cy - drawH / 2
     ctx.drawImage(img, drawX, drawY, drawW, drawH)
-    state.productRect = { x: drawX, y: drawY, w: drawW, h: drawH }
-  } else {
-    state.productRect = null
+    hits.push({ key: 'product', x: drawX, y: drawY, w: drawW, h: drawH })
   }
 
   // 3. Campos de texto (sempre por cima do produto)
-  drawTextField(ctx, f.product_name,     fields.name.value)
-  drawTextField(ctx, f.product_subtitle, fields.subtitle.value)
-  drawTextField(ctx, f.installments,     fields.installments.value)
-  drawTextField(ctx, f.price,            fields.price.value)
+  const textMap = [
+    ['product_name',     f.product_name,     fields.name.value],
+    ['product_subtitle', f.product_subtitle, fields.subtitle.value],
+    ['installments',     f.installments,     fields.installments.value],
+    ['price',            f.price,            fields.price.value],
+  ]
+  for (const [key, cfg, val] of textMap) {
+    const box = drawTextField(ctx, cfg, val, T[key])
+    if (box) hits.push({ key, ...box })
+  }
 
   // 4. Badge (centralizado no elemento circular do template)
   const badgeCfg = f.badge
   const badgeVal = fields.badge.value.trim()
   if (badgeCfg && badgeVal) {
+    const t = T.badge
+    const scale = t.scale || 1
     const text = badgeCfg.transform === 'uppercase' ? badgeVal.toUpperCase() : badgeVal
+    const bx = badgeCfg.cx + t.dx, by = badgeCfg.cy + t.dy
     ctx.save()
-    ctx.font         = badgeCfg.font
+    ctx.font         = scaleFont(badgeCfg.font, scale)
     ctx.fillStyle    = badgeCfg.color
     ctx.textAlign    = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(text, badgeCfg.cx, badgeCfg.cy, badgeCfg.max_width)
+    ctx.fillText(text, bx, by, badgeCfg.max_width)
+    const bw = Math.min(ctx.measureText(text).width, badgeCfg.max_width || 9999)
+    const bh = parseFloat(badgeCfg.font.match(/(\d+(?:\.\d+)?)px/)?.[1] || '16') * scale * 1.2
     ctx.restore()
+    hits.push({ key: 'badge', x: bx - bw / 2, y: by - bh / 2, w: bw, h: bh })
+  }
+
+  state.hitboxes = hits
+
+  // 5. Contorno do elemento selecionado (não entra no PNG final — redesenhado p/ download)
+  if (state.selected) {
+    const box = hits.find(b => b.key === state.selected)
+    if (box) {
+      const pad = 8
+      ctx.save()
+      ctx.strokeStyle = '#f97316'
+      ctx.lineWidth = Math.max(2, w / 400)
+      ctx.setLineDash([12, 8])
+      ctx.strokeRect(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2)
+      ctx.restore()
+    }
   }
 }
 
 function resetTransform() {
-  state.productTransform = { dx: 0, dy: 0, scale: 1 }
-  if (elSizeSlider) elSizeSlider.value = '1'
+  state.transforms = freshTransforms()
+  state.selected = null
+  if (elSizeSlider) { elSizeSlider.value = '1'; elSizeSlider.disabled = true }
+  syncSelectionUI()
+}
+
+// Atualiza o rótulo/slider conforme o elemento selecionado
+function syncSelectionUI() {
+  const labels = {
+    product: 'Produto', product_name: 'Nome', product_subtitle: 'Subtítulo',
+    installments: 'Parcelas', price: 'Preço', badge: 'Selo',
+  }
+  if (elSelLabel) {
+    elSelLabel.textContent = state.selected
+      ? `Selecionado: ${labels[state.selected] || state.selected}`
+      : 'Toque num elemento para selecionar'
+  }
+  if (elSizeSlider) {
+    elSizeSlider.disabled = !state.selected
+    if (state.selected) elSizeSlider.value = String(state.transforms[state.selected].scale)
+  }
 }
 
 // Os campos de texto só mudam o desenho — não precisam recarregar template/fontes
@@ -635,12 +753,18 @@ async function handleFetch() {
 
 elBtnDownload.addEventListener('click', () => {
   if (!state.ready) return
+  // Redesenha sem o contorno de seleção para não sair no PNG final
+  const keepSel = state.selected
+  state.selected = null
+  drawScene()
   elCanvas.toBlob(blob => {
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `arte_${state.selectedTpl}_${Date.now()}.png`
     a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+    state.selected = keepSel
+    drawScene()
   }, 'image/png')
 })
 
@@ -653,7 +777,7 @@ Object.values(fields).forEach(input => input.addEventListener('input', debounced
 
 elIgHandle?.addEventListener('input', () => localStorage.setItem('ig_handle', elIgHandle.value))
 
-// ── Posicionamento interativo do produto (arrastar + redimensionar) ───────────
+// ── Editor interativo: selecionar / arrastar / redimensionar elementos ─────────
 
 // Converte coordenadas do ponteiro (CSS px na tela) para coordenadas do canvas (px reais)
 function canvasCoords(e) {
@@ -664,36 +788,48 @@ function canvasCoords(e) {
   }
 }
 
-function pointInProduct(p) {
-  const r = state.productRect
-  return r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
+// Acha o elemento sob o ponto — itera de cima para baixo (texto vence o produto)
+function hitTest(p) {
+  const pad = 6
+  for (let i = state.hitboxes.length - 1; i >= 0; i--) {
+    const b = state.hitboxes[i]
+    if (p.x >= b.x - pad && p.x <= b.x + b.w + pad &&
+        p.y >= b.y - pad && p.y <= b.y + b.h + pad) return b.key
+  }
+  return null
 }
 
 let dragging  = false
-let dragStart = null   // { x, y, dx0, dy0 }
+let dragStart = null   // { x, y, dx0, dy0, key }
 
 elCanvas.addEventListener('pointerdown', e => {
-  if (!state.productImgEl) return
-  const p = canvasCoords(e)
-  if (!pointInProduct(p)) return
+  if (!state.ready) return
+  const p   = canvasCoords(e)
+  const key = hitTest(p)
+
+  state.selected = key
+  syncSelectionUI()
+
+  if (!key) { drawScene(); return }   // clicou no vazio → só deseleciona
+
+  const t = state.transforms[key]
   dragging  = true
-  dragStart = { x: p.x, y: p.y, dx0: state.productTransform.dx, dy0: state.productTransform.dy }
-  elCanvas.setPointerCapture(e.pointerId)
+  dragStart = { x: p.x, y: p.y, dx0: t.dx, dy0: t.dy, key }
+  try { elCanvas.setPointerCapture(e.pointerId) } catch {}
   elCanvas.style.cursor = 'grabbing'
+  drawScene()
   e.preventDefault()
 })
 
 elCanvas.addEventListener('pointermove', e => {
   if (!dragging) {
-    // feedback de cursor: "mãozinha" sobre o produto
-    if (state.productImgEl) {
-      elCanvas.style.cursor = pointInProduct(canvasCoords(e)) ? 'grab' : 'default'
-    }
+    elCanvas.style.cursor = hitTest(canvasCoords(e)) ? 'grab' : 'default'
     return
   }
   const p = canvasCoords(e)
-  state.productTransform.dx = dragStart.dx0 + (p.x - dragStart.x)
-  state.productTransform.dy = dragStart.dy0 + (p.y - dragStart.y)
+  const t = state.transforms[dragStart.key]
+  t.dx = dragStart.dx0 + (p.x - dragStart.x)
+  t.dy = dragStart.dy0 + (p.y - dragStart.y)
   drawScene()
   e.preventDefault()
 })
@@ -707,13 +843,14 @@ function endDrag(e) {
 elCanvas.addEventListener('pointerup', endDrag)
 elCanvas.addEventListener('pointercancel', endDrag)
 
-// Slider de tamanho
+// Slider de tamanho — afeta o elemento selecionado
 elSizeSlider?.addEventListener('input', () => {
-  state.productTransform.scale = parseFloat(elSizeSlider.value)
+  if (!state.selected) return
+  state.transforms[state.selected].scale = parseFloat(elSizeSlider.value)
   drawScene()
 })
 
-// Resetar posição e tamanho
+// Resetar posições e tamanhos
 elBtnResetPos?.addEventListener('click', () => {
   resetTransform()
   drawScene()

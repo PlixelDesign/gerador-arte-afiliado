@@ -374,6 +374,18 @@ main {
   text-align: center;
 }
 
+.sel-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-align: center;
+}
+
+.size-slider:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .pos-row {
   display: flex;
   align-items: center;
